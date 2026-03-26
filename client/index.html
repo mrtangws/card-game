@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turn-Based Card Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            width: 100%;
+            height: 100vh;
+        }
+        
+        #lobby {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            text-align: center;
+            min-width: 400px;
+            z-index: 100;
+        }
+        
+        #lobby h1 {
+            color: #16213e;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        
+        #lobby h2 {
+            color: #1a1a2e;
+            margin: 20px 0 15px;
+            font-size: 1.3em;
+        }
+        
+        .input-group {
+            margin: 15px 0;
+        }
+        
+        .input-group input {
+            padding: 12px 20px;
+            font-size: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            width: 100%;
+            transition: border-color 0.3s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: #16213e;
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.3s;
+            font-weight: bold;
+        }
+        
+        .btn-primary {
+            background: #16213e;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #1a1a2e;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: #e94560;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #c23850;
+            transform: translateY(-2px);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #roomInfo {
+            display: none;
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 50;
+        }
+        
+        #roomInfo h3 {
+            color: #16213e;
+            margin-bottom: 10px;
+        }
+        
+        #roomInfo p {
+            color: #555;
+            margin: 5px 0;
+        }
+        
+        #players {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 50;
+            min-width: 200px;
+        }
+        
+        #players h3 {
+            color: #16213e;
+            margin-bottom: 10px;
+        }
+        
+        .player-item {
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 8px;
+            background: #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .player-item.active {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .player-item .score {
+            font-weight: bold;
+        }
+        
+        #gameStatus {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 24px;
+            z-index: 50;
+            display: none;
+            text-align: center;
+        }
+        
+        #scores {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 50;
+            display: none;
+        }
+        
+        #scores table {
+            border-collapse: collapse;
+        }
+        
+        #scores th, #scores td {
+            padding: 8px 15px;
+            text-align: center;
+        }
+        
+        #scores th {
+            color: #16213e;
+            border-bottom: 2px solid #16213e;
+        }
+        
+        #scores td {
+            color: #555;
+        }
+        
+        #turnIndicator {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(233, 69, 96, 0.9);
+            color: white;
+            padding: 10px 25px;
+            border-radius: 25px;
+            font-size: 18px;
+            font-weight: bold;
+            z-index: 50;
+            display: none;
+        }
+        
+        #yourTurn {
+            position: absolute;
+            bottom: 140px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #4CAF50;
+            color: white;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 20px;
+            font-weight: bold;
+            z-index: 50;
+            display: none;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        #error {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff4444;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            z-index: 1000;
+            display: none;
+            animation: shake 0.5s;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(-50%) translateX(0); }
+            25% { transform: translateX(-50%) translateX(-10px); }
+            75% { transform: translateX(-50%) translateX(10px); }
+        }
+        
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #555;
+            max-width: 250px;
+            z-index: 50;
+        }
+        
+        #instructions h4 {
+            color: #16213e;
+            margin-bottom: 8px;
+        }
+        
+        #instructions ul {
+            margin-left: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer"></div>
+    
+    <div id="lobby">
+        <h1>🎴 Card Game</h1>
+        
+        <div class="input-group">
+            <input type="text" id="playerName" placeholder="Enter your name" value="Player">
+        </div>
+        
+        <h2>Create a Room</h2>
+        <button class="btn btn-primary" id="createBtn">Create Room</button>
+        
+        <h2>Join a Room</h2>
+        <div class="input-group">
+            <input type="text" id="roomCode" placeholder="Enter room code">
+        </div>
+        <button class="btn btn-secondary" id="joinBtn">Join Room</button>
+    </div>
+    
+    <div id="roomInfo" style="display:none;">
+        <h3>Room: <span id="roomIdDisplay"></span></h3>
+        <p>Waiting for players...</p>
+        <p><span id="playerCount">1</span>/4 players</p>
+        <button class="btn btn-primary" id="startBtn" style="margin-top: 10px; display: none;">Start Game</button>
+    </div>
+    
+    <div id="players" style="display:none;">
+        <h3>Players</h3>
+        <div id="playerList"></div>
+    </div>
+    
+    <div id="gameStatus"></div>
+    
+    <div id="yourTurn">YOUR TURN!</div>
+    <div id="turnIndicator"></div>
+    
+    <div id="scores"></div>
+    
+    <div id="instructions">
+        <h4>How to Play</h4>
+        <ul>
+            <li>Play the 2 of Clubs to start</li>
+            <li>Follow suit if you can</li>
+            <li>Try to avoid hearts and the Queen of Spades</li>
+            <li>Lowest score wins!</li>
+        </ul>
+    </div>
+    
+    <div id="error"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>

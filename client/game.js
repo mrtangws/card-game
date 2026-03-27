@@ -3,7 +3,7 @@
  * Connects to WebSocket server for multiplayer gameplay
  */
 
-const WS_URL = `ws://${window.location.host}`;
+const WS_URL = (window.location.protocol === 'https:' ? 'wss' : 'ws') + '://' + window.location.host;
 
 // Game state
 let ws = null;

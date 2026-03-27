@@ -573,6 +573,7 @@ function compareBig2Plays(playA, playB) {
 
 /**
  * Check if playA can beat playB in Big 2
+ * Allows different types (e.g., full house after straight) with type hierarchy
  */
 function canBeatBig2Play(playA, playB) {
     if (!playB || playB.length === 0) return true; // First play, anything valid works
@@ -582,8 +583,32 @@ function canBeatBig2Play(playA, playB) {
     const typeB = isValidBig2Play(playB);
     
     if (!typeA.valid || !typeB.valid) return false;
-    if (typeA.type !== typeB.type) return false; // Must be same type
     
+    // Type hierarchy for 5-card hands (higher = stronger)
+    const typeOrder = {
+        'single': 1,
+        'pair': 2,
+        'straight': 3,
+        'flush': 4,
+        'full_house': 5,
+        'four_of_a_kind': 6,
+        'straight_flush': 7
+    };
+    
+    // If same type, compare normally
+    if (typeA.type === typeB.type) {
+        return compareBig2Plays(playA, playB) > 0;
+    }
+    
+    // Different types: allow if playA is higher in hierarchy
+    // (e.g., full house can beat straight)
+    const orderA = typeOrder[typeA.type] || 0;
+    const orderB = typeOrder[typeB.type] || 0;
+    
+    if (orderA > orderB) return true; // Higher type beats lower
+    if (orderA < orderB) return false; // Lower type cannot beat higher
+    
+    // Same order (shouldn't happen for different types), fall back to card comparison
     return compareBig2Plays(playA, playB) > 0;
 }
 

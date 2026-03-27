@@ -8,7 +8,7 @@ const WS_URL = (window.location.protocol === 'https:' ? 'wss' : 'ws') + '://' + 
 // Game state
 let ws = null;
 let clientId = null;
-let playerName = 'Player';
+let playerName = localStorage.getItem('cardGamePlayerName') || 'Player';
 let roomId = null;
 let gameType = 'hearts'; // 'hearts' or 'big2'
 let players = [];
@@ -20,6 +20,7 @@ let trick = [];
 let selectedCards = []; // For Big 2 multi-card selection
 let currentPlay = [];   // Current play on table (Big 2)
 let canFollow = true;   // Whether you can follow current play (Big 2)
+let playHistory = [];   // Last 10 plays for Big 2
 
 // Phaser config
 const config = {
@@ -54,6 +55,12 @@ const CARD_SPACING = 80;
 document.addEventListener('DOMContentLoaded', () => {
     // Connect to server
     connectWebSocket();
+    
+    // Pre-fill player name from localStorage
+    const savedName = localStorage.getItem('cardGamePlayerName');
+    if (savedName) {
+        document.getElementById('playerName').value = savedName;
+    }
     
     // UI event listeners
     document.getElementById('createBtn').addEventListener('click', createRoom);
@@ -214,6 +221,7 @@ function joinRoom() {
 
 function updateName() {
     playerName = document.getElementById('playerName').value.trim() || 'Player';
+    localStorage.setItem('cardGamePlayerName', playerName);
     sendMessage({ type: 'setName', name: playerName });
 }
 
@@ -605,6 +613,9 @@ function handleCardsPlayed(data) {
     // Render played cards on table (messy/natural look)
     renderPlayedCards(data.cards);
     
+    // Add to play history
+    addToPlayHistory(player?.name || 'Player', data.cards, data.playType);
+    
     showStatus(`${player?.name || 'Player'} played ${data.playType || data.cards.length} card(s)`, 2000);
     
     // Update current play display
@@ -648,6 +659,9 @@ function renderPlayedCards(cards) {
 function handlePlayerPassed(data) {
     const player = players.find(p => p.id === data.playerId);
     showStatus(`${player?.name || 'Player'} passed`, 1500);
+    
+    // Add pass to play history
+    addToPlayHistory(player?.name || 'Player', null, 'pass');
 }
 
 function handleInitiativeGained(data) {
@@ -658,6 +672,46 @@ function handleInitiativeGained(data) {
     // Clear played cards table for new round
     playedCardsSprites.forEach(s => s && s.destroy());
     playedCardsSprites = [];
+}
+
+function addToPlayHistory(playerName, cards, playType) {
+    let text = '';
+    if (playType === 'pass') {
+        text = 'Pass';
+    } else if (cards && cards.length > 0) {
+        const suitSymbols = { 'hearts': '♥', 'diamonds': '♦', 'clubs': '♣', 'spades': '♠' };
+        text = cards.map(c => `${c.rank}${suitSymbols[c.suit]}`).join(' ');
+        if (playType) text += ` (${playType})`;
+    }
+    
+    playHistory.unshift({ player: playerName, text: text, time: Date.now() });
+    
+    // Keep only last 10
+    if (playHistory.length > 10) playHistory.pop();
+    
+    // Update history panel
+    updatePlayHistoryPanel();
+}
+
+function updatePlayHistoryPanel() {
+    let panel = document.getElementById('playHistoryPanel');
+    if (!panel) {
+        // Create panel
+        panel = document.createElement('div');
+        panel.id = 'playHistoryPanel';
+        panel.style.cssText = 'position:fixed; top:20px; right:20px; width:200px; max-height:400px; overflow-y:auto; background:rgba(0,0,0,0.8); color:white; padding:15px; border-radius:10px; font-size:13px; z-index:50;';
+        panel.innerHTML = '<h4 style="margin:0 0 10px 0; color:#fff;">Play History</h4><div id="playHistoryList"></div>';
+        document.body.appendChild(panel);
+    }
+    
+    const list = document.getElementById('playHistoryList');
+    if (!list) return;
+    
+    list.innerHTML = playHistory.map(p => 
+        `<div style="margin:5px 0; padding:5px; background:rgba(255,255,255,0.1); border-radius:4px;">
+            <strong style="color:#4CAF50">${p.player}</strong>: ${p.text}
+        </div>`
+    ).join('');
 }
 
 function showFinalScores(scores) {

@@ -10,12 +10,16 @@ let ws = null;
 let clientId = null;
 let playerName = 'Player';
 let roomId = null;
+let gameType = 'hearts'; // 'hearts' or 'big2'
 let players = [];
 let myHand = [];
 let myIndex = 0;
 let currentPlayerId = null;
 let gameStarted = false;
 let trick = [];
+let selectedCards = []; // For Big 2 multi-card selection
+let currentPlay = [];   // Current play on table (Big 2)
+let canFollow = true;   // Whether you can follow current play (Big 2)
 
 // Phaser config
 const config = {
@@ -102,6 +106,7 @@ function handleServerMessage(data) {
             
         case 'roomCreated':
             roomId = data.roomId;
+            gameType = data.gameType || 'hearts';
             players = data.players;
             showRoomInfo();
             break;
@@ -123,15 +128,19 @@ function handleServerMessage(data) {
             
         case 'gameStarted':
             gameStarted = true;
+            gameType = data.gameType || 'hearts';
             players = data.players;
             myHand = data.yourHand;
             myIndex = data.yourIndex;
             currentPlayerId = data.currentPlayer;
+            selectedCards = [];
+            currentPlay = [];
             hideLobby();
             showGameUI();
             updatePlayerList();
             renderHand();
             updateTurnIndicator();
+            showGameControls();
             break;
             
         case 'cardPlayed':
@@ -140,6 +149,8 @@ function handleServerMessage(data) {
             
         case 'turnChanged':
             currentPlayerId = data.currentPlayer;
+            if (data.currentPlay !== undefined) currentPlay = data.currentPlay;
+            if (data.canFollow !== undefined) canFollow = data.canFollow;
             updateTurnIndicator();
             break;
             
@@ -153,6 +164,19 @@ function handleServerMessage(data) {
             
         case 'gameComplete':
             handleGameComplete(data);
+            break;
+            
+        // Big 2 specific messages
+        case 'cardsPlayed':
+            handleCardsPlayed(data);
+            break;
+            
+        case 'playerPassed':
+            handlePlayerPassed(data);
+            break;
+            
+        case 'initiativeGained':
+            handleInitiativeGained(data);
             break;
             
         case 'error':
@@ -169,7 +193,9 @@ function sendMessage(data) {
 
 function createRoom() {
     updateName();
-    sendMessage({ type: 'createRoom' });
+    const selectedType = document.getElementById('gameTypeSelect')?.value || 'hearts';
+    gameType = selectedType;
+    sendMessage({ type: 'createRoom', gameType: selectedType });
 }
 
 function joinRoom() {
@@ -213,6 +239,20 @@ function hideLobby() {
 function showGameUI() {
     document.getElementById('players').style.display = 'block';
     document.getElementById('instructions').style.display = 'block';
+    
+    // Update instructions for Big 2
+    if (gameType === 'big2') {
+        const list = document.getElementById('instructionsList');
+        if (list) {
+            list.innerHTML = `
+                <li>Play the 3 of Diamonds to start</li>
+                <li>Play 1, 2, or 5 cards (singles, pairs, poker hands)</li>
+                <li>No triples allowed!</li>
+                <li>Beat the previous play or pass</li>
+                <li>First to empty hand wins!</li>
+            `;
+        }
+    }
 }
 
 function updatePlayerList() {
@@ -359,12 +399,39 @@ function createCardSprite(x, y, card, interactive = false, width = CARD_WIDTH, h
         
         container.on('pointerdown', () => {
             if (isMyTurn()) {
-                playCard(card);
+                if (gameType === 'big2') {
+                    // Toggle card selection for Big 2
+                    toggleCardSelection(card, container);
+                } else {
+                    playCard(card);
+                }
             }
         });
     }
     
     return container;
+}
+
+function toggleCardSelection(card, container) {
+    const idx = selectedCards.findIndex(c => c.suit === card.suit && c.rank === card.rank);
+    
+    if (idx !== -1) {
+        // Deselect
+        selectedCards.splice(idx, 1);
+        container.setY(container.y + 20); // Move down
+        container.setTint(0xffffff); // Remove tint
+    } else {
+        // Select
+        selectedCards.push(card);
+        container.setY(container.y - 20); // Move up
+        container.setTint(0xffff00); // Yellow tint for selected
+    }
+    
+    // Update play button state
+    const playBtn = document.getElementById('playBtn');
+    if (playBtn) {
+        playBtn.disabled = selectedCards.length === 0;
+    }
 }
 
 function isMyTurn() {
@@ -461,6 +528,20 @@ function handleRoundComplete(data) {
 }
 
 function handleGameComplete(data) {
+    // Handle Big 2 game complete
+    if (data.gameType === 'big2') {
+        const winner = data.winner;
+        showStatus(`🏆 ${winner.name} wins Big 2!`, 5000);
+        
+        // Show rankings
+        if (data.rankings) {
+            showBig2Rankings(data.rankings);
+        }
+        gameStarted = false;
+        return;
+    }
+    
+    // Hearts game complete
     const winner = data.winner;
     showStatus(`🏆 Game Over! ${winner.name} wins with ${winner.score} points!`, 5000);
     
@@ -468,6 +549,59 @@ function handleGameComplete(data) {
     showFinalScores(data.finalScores);
     
     gameStarted = false;
+}
+
+function showBig2Rankings(rankings) {
+    const scoresDiv = document.getElementById('scores');
+    scoresDiv.style.display = 'block';
+    
+    let html = '<h3>Big 2 Results</h3><table><tr><th>Rank</th><th>Player</th><th>Cards Left</th></tr>';
+    rankings.forEach((r, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
+        const status = r.cardsLeft === 0 ? ' (Winner!)' : '';
+        html += `<tr><td>${i+1} ${medal}</td><td>${r.name}${status}</td><td>${r.cardsLeft}</td></tr>`;
+    });
+    html += '</table>';
+    scoresDiv.innerHTML = html;
+    
+    setTimeout(() => {
+        scoresDiv.style.display = 'none';
+    }, 10000);
+}
+
+// Big 2 message handlers
+function handleCardsPlayed(data) {
+    currentPlay = data.cards || [];
+    
+    // Find player who played
+    const player = players.find(p => p.id === data.playerId);
+    
+    // Remove cards from my hand if it was me
+    if (data.playerId === clientId) {
+        data.cards.forEach(card => {
+            const idx = myHand.findIndex(c => c.suit === card.suit && c.rank === card.rank);
+            if (idx !== -1) myHand.splice(idx, 1);
+        });
+        selectedCards = [];
+        renderHand();
+    }
+    
+    showStatus(`${player?.name || 'Player'} played ${data.playType || data.cards.length} card(s)`, 2000);
+    
+    // Update current play display
+    updateCurrentPlayDisplay(data.cards);
+}
+
+function handlePlayerPassed(data) {
+    const player = players.find(p => p.id === data.playerId);
+    showStatus(`${player?.name || 'Player'} passed`, 1500);
+}
+
+function handleInitiativeGained(data) {
+    const player = players.find(p => p.id === data.playerId);
+    showStatus(`Everyone passed! ${player?.name || 'Player'} has initiative!`, 2500);
+    currentPlay = [];
+    updateCurrentPlayDisplay([]);
 }
 
 function showFinalScores(scores) {
@@ -511,10 +645,21 @@ function showError(message) {
 function updateTurnIndicator() {
     const yourTurnEl = document.getElementById('yourTurn');
     const turnIndicatorEl = document.getElementById('turnIndicator');
+    const playBtn = document.getElementById('playBtn');
+    const passBtn = document.getElementById('passBtn');
     
     if (isMyTurn()) {
         yourTurnEl.style.display = 'block';
         turnIndicatorEl.style.display = 'none';
+        
+        // Show controls for Big 2
+        if (gameType === 'big2') {
+            if (playBtn) playBtn.style.display = 'inline-block';
+            if (passBtn) {
+                // Can't pass on first play
+                passBtn.style.display = (currentPlay.length === 0 && !canFollow) ? 'none' : 'inline-block';
+            }
+        }
     } else {
         yourTurnEl.style.display = 'none';
         const currentPlayer = players.find(p => p.id === currentPlayerId);
@@ -522,9 +667,70 @@ function updateTurnIndicator() {
             turnIndicatorEl.textContent = `${currentPlayer.name}'s turn`;
             turnIndicatorEl.style.display = 'block';
         }
+        
+        // Hide controls when not your turn
+        if (playBtn) playBtn.style.display = 'none';
+        if (passBtn) passBtn.style.display = 'none';
     }
     
     updatePlayerList();
+}
+
+function showGameControls() {
+    // Create play/pass buttons if they don't exist
+    if (!document.getElementById('playBtn')) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.id = 'gameControls';
+        controlsDiv.style.cssText = 'position:fixed; bottom:180px; left:50%; transform:translateX(-50%); z-index:60; display:none;';
+        
+        const playBtn = document.createElement('button');
+        playBtn.id = 'playBtn';
+        playBtn.textContent = 'Play Selected';
+        playBtn.className = 'btn btn-primary';
+        playBtn.style.marginRight = '10px';
+        playBtn.onclick = playSelectedCards;
+        
+        const passBtn = document.createElement('button');
+        passBtn.id = 'passBtn';
+        passBtn.textContent = 'Pass';
+        passBtn.className = 'btn btn-secondary';
+        passBtn.onclick = passTurn;
+        
+        controlsDiv.appendChild(playBtn);
+        controlsDiv.appendChild(passBtn);
+        document.body.appendChild(controlsDiv);
+    }
+    
+    if (gameType === 'big2') {
+        document.getElementById('gameControls').style.display = 'block';
+    }
+}
+
+function playSelectedCards() {
+    if (selectedCards.length === 0) {
+        showError('Select cards to play');
+        return;
+    }
+    sendMessage({ type: 'playCard', cards: selectedCards });
+}
+
+function passTurn() {
+    sendMessage({ type: 'pass' });
+}
+
+function updateCurrentPlayDisplay(cards) {
+    const currentPlayEl = document.getElementById('currentPlay');
+    if (!currentPlayEl) return;
+    
+    if (!cards || cards.length === 0) {
+        currentPlayEl.style.display = 'none';
+        return;
+    }
+    
+    const suitSymbols = { 'hearts': '♥', 'diamonds': '♦', 'clubs': '♣', 'spades': '♠' };
+    const cardStrs = cards.map(c => `${c.rank}${suitSymbols[c.suit]}`).join(' ');
+    currentPlayEl.innerHTML = `<strong>Current Play:</strong><br>${cardStrs}`;
+    currentPlayEl.style.display = 'block';
 }
 
 function getPlayerPositions() {

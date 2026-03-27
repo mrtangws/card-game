@@ -300,6 +300,14 @@
             <input type="text" id="playerName" placeholder="Enter your name" value="Player">
         </div>
         
+        <h2>Game Type</h2>
+        <div class="input-group">
+            <select id="gameTypeSelect" style="padding:12px 20px; font-size:16px; border:2px solid #e0e0e0; border-radius:10px; width:100%;">
+                <option value="hearts">Hearts</option>
+                <option value="big2">Big 2</option>
+            </select>
+        </div>
+        
         <h2>Create a Room</h2>
         <button class="btn btn-primary" id="createBtn">Create Room</button>
         
@@ -326,12 +334,13 @@
     
     <div id="yourTurn">YOUR TURN!</div>
     <div id="turnIndicator"></div>
+    <div id="currentPlay" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); display:none; z-index:55; background:rgba(0,0,0,0.7); padding:20px; border-radius:10px; color:white; font-size:18px;"></div>
     
     <div id="scores"></div>
     
     <div id="instructions">
         <h4>How to Play</h4>
-        <ul>
+        <ul id="instructionsList">
             <li>Play the 2 of Clubs to start</li>
             <li>Follow suit if you can</li>
             <li>Try to avoid hearts and the Queen of Spades</li>

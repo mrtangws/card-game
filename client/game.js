@@ -552,6 +552,15 @@ function handleGameComplete(data) {
     playedCardsSprites.forEach(s => s && s.destroy());
     playedCardsSprites = [];
     
+    // Hide Play/Pass buttons
+    const playBtn = document.getElementById('playBtn');
+    const passBtn = document.getElementById('passBtn');
+    if (playBtn) playBtn.style.display = 'none';
+    if (passBtn) passBtn.style.display = 'none';
+    
+    // Show New Game button
+    showNewGameButton();
+    
     // Handle Big 2 game complete
     if (data.gameType === 'big2') {
         const winner = data.winner;
@@ -573,6 +582,31 @@ function handleGameComplete(data) {
     showFinalScores(data.finalScores);
     
     gameStarted = false;
+}
+
+function showNewGameButton() {
+    let newGameDiv = document.getElementById('newGameDiv');
+    if (!newGameDiv) {
+        newGameDiv = document.createElement('div');
+        newGameDiv.id = 'newGameDiv';
+        newGameDiv.style.cssText = 'position:fixed; bottom:180px; left:50%; transform:translateX(-50%); z-index:60;';
+        
+        const btn = document.createElement('button');
+        btn.id = 'newGameBtn';
+        btn.textContent = 'New Game';
+        btn.className = 'btn btn-primary';
+        btn.style.fontSize = '20px';
+        btn.onclick = clickNewGame;
+        
+        newGameDiv.appendChild(btn);
+        document.body.appendChild(newGameDiv);
+    }
+    newGameDiv.style.display = 'block';
+}
+
+function clickNewGame() {
+    // Tell server we want to start new game
+    sendMessage({ type: 'newGame' });
 }
 
 function showBig2Rankings(rankings) {
@@ -699,7 +733,7 @@ function updatePlayHistoryPanel() {
         // Create panel
         panel = document.createElement('div');
         panel.id = 'playHistoryPanel';
-        panel.style.cssText = 'position:fixed; top:20px; right:20px; width:200px; max-height:400px; overflow-y:auto; background:rgba(0,0,0,0.8); color:white; padding:15px; border-radius:10px; font-size:13px; z-index:50;';
+        panel.style.cssText = 'position:fixed; top:180px; right:20px; width:200px; max-height:400px; overflow-y:auto; background:rgba(0,0,0,0.8); color:white; padding:15px; border-radius:10px; font-size:13px; z-index:50;';
         panel.innerHTML = '<h4 style="margin:0 0 10px 0; color:#fff;">Play History</h4><div id="playHistoryList"></div>';
         document.body.appendChild(panel);
     }

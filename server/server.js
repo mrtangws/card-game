@@ -148,6 +148,10 @@ function handleMessage(ws, data) {
             handleBig2Pass(ws, client);
             break;
             
+        case 'newGame':
+            handleNewGame(ws, client);
+            break;
+            
         case 'leaveRoom':
             leaveRoom(ws, client);
             break;
@@ -620,6 +624,12 @@ function initializeBig2Game(room) {
     room.roundNumber++;
     room.currentPlay = [];
     room.lastPlayerToPlay = null;
+    
+    // Shuffle player order for randomized seating
+    for (let i = room.players.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [room.players[i], room.players[j]] = [room.players[j], room.players[i]];
+    }
     
     // Reset player hands
     room.players.forEach(p => {
@@ -1312,6 +1322,40 @@ function completeBig2Game(room, winner) {
     });
     
     console.log(`Big 2 game completed in room ${room.id}. Winner: ${winner.name}`);
+}
+
+/**
+ * Handle New Game request - restart game with persistent scores
+ */
+function handleNewGame(ws, client) {
+    const room = rooms.get(client.roomId);
+    if (!room) return;
+    
+    // Mark this player as ready for new game
+    const player = room.players.find(p => p.id === client.id);
+    if (player) {
+        player.readyForNewGame = true;
+    }
+    
+    // Check if all human players are ready
+    const humanPlayers = room.players.filter(p => !p.isAI);
+    const allHumansReady = humanPlayers.every(p => p.readyForNewGame);
+    
+    if (allHumansReady) {
+        // Reset ready flags
+        room.players.forEach(p => p.readyForNewGame = false);
+        
+        // Reinitialize game (scores are preserved on player objects)
+        initializeGame(room);
+    } else {
+        // Notify others how many are ready
+        const readyCount = humanPlayers.filter(p => p.readyForNewGame).length;
+        broadcastToRoom(room.id, {
+            type: 'newGameRequested',
+            readyCount: readyCount,
+            totalHumans: humanPlayers.length
+        });
+    }
 }
 
 function leaveRoom(ws, client) {

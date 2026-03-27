@@ -251,36 +251,69 @@ function renderHand() {
     
     if (!myHand || myHand.length === 0) return;
     
-    const centerX = scene.scale.width / 2;
-    const y = scene.scale.height - CARD_HEIGHT / 2 - 30;
+    const screenWidth = scene.scale.width;
+    const padding = 20; // left/right padding
+    const availableWidth = screenWidth - padding * 2;
     
-    const totalWidth = (myHand.length - 1) * CARD_SPACING + CARD_WIDTH;
-    const startX = centerX - totalWidth / 2;
+    // Calculate responsive spacing to fit all cards
+    const numCards = myHand.length;
+    let spacing = CARD_SPACING;
+    let cardWidth = CARD_WIDTH;
+    let cardHeight = CARD_HEIGHT;
+    
+    // Calculate total width with default sizes
+    let totalWidth = (numCards - 1) * spacing + cardWidth;
+    
+    // If doesn't fit, scale down
+    if (totalWidth > availableWidth) {
+        // First try reducing spacing
+        spacing = Math.max(20, (availableWidth - cardWidth) / (numCards - 1));
+        totalWidth = (numCards - 1) * spacing + cardWidth;
+        
+        // If still doesn't fit, scale down cards too
+        if (totalWidth > availableWidth) {
+            const scale = availableWidth / totalWidth;
+            cardWidth = Math.max(60, CARD_WIDTH * scale);
+            cardHeight = Math.max(84, CARD_HEIGHT * scale);
+            spacing = Math.max(15, spacing * scale);
+            totalWidth = (numCards - 1) * spacing + cardWidth;
+        }
+    }
+    
+    const centerX = screenWidth / 2;
+    const y = scene.scale.height - cardHeight / 2 - 30;
+    const startX = Math.max(padding + cardWidth/2, centerX - totalWidth / 2);
     
     myHand.forEach((card, index) => {
-        const x = startX + index * CARD_SPACING;
-        const cardSprite = createCardSprite(x, y, card, true);
+        const x = startX + index * spacing;
+        const cardSprite = createCardSprite(x, y, card, true, cardWidth, cardHeight);
         cardSprites.push(cardSprite);
     });
 }
 
-function createCardSprite(x, y, card, interactive = false) {
+function createCardSprite(x, y, card, interactive = false, width = CARD_WIDTH, height = CARD_HEIGHT) {
     const container = scene.add.container(x, y);
     
     // Card background
     const bg = scene.add.graphics();
     bg.fillStyle(0xffffff, 1);
-    bg.fillRoundedRect(-CARD_WIDTH/2, -CARD_HEIGHT/2, CARD_WIDTH, CARD_HEIGHT, 8);
+    bg.fillRoundedRect(-width/2, -height/2, width, height, 8);
     bg.lineStyle(2, 0x333333, 1);
-    bg.strokeRoundedRect(-CARD_WIDTH/2, -CARD_HEIGHT/2, CARD_WIDTH, CARD_HEIGHT, 8);
+    bg.strokeRoundedRect(-width/2, -height/2, width, height, 8);
     container.add(bg);
     
     // Suit color
     const color = (card.suit === 'hearts' || card.suit === 'diamonds') ? '#e74c3c' : '#2c3e50';
     
+    // Scale font sizes based on card size
+    const scale = Math.min(width / CARD_WIDTH, height / CARD_HEIGHT);
+    const fontSize = Math.max(12, Math.floor(18 * scale));
+    const centerFontSize = Math.max(24, Math.floor(48 * scale));
+    const suitFontSize = Math.max(14, Math.floor(20 * scale));
+    
     // Card rank
-    const rankText = scene.add.text(-CARD_WIDTH/2 + 10, -CARD_HEIGHT/2 + 8, card.rank, {
-        fontSize: '18px',
+    const rankText = scene.add.text(-width/2 + 10 * scale, -height/2 + 8 * scale, card.rank, {
+        fontSize: fontSize + 'px',
         color: color,
         fontStyle: 'bold'
     });
@@ -288,29 +321,29 @@ function createCardSprite(x, y, card, interactive = false) {
     
     // Suit symbol
     const suitSymbols = { 'hearts': '♥', 'diamonds': '♦', 'clubs': '♣', 'spades': '♠' };
-    const suitText = scene.add.text(-CARD_WIDTH/2 + 10, -CARD_HEIGHT/2 + 28, suitSymbols[card.suit], {
-        fontSize: '20px',
+    const suitText = scene.add.text(-width/2 + 10 * scale, -height/2 + 28 * scale, suitSymbols[card.suit], {
+        fontSize: suitFontSize + 'px',
         color: color
     });
     container.add(suitText);
     
     // Center suit (large)
     const centerSuit = scene.add.text(0, 0, suitSymbols[card.suit], {
-        fontSize: '48px',
+        fontSize: centerFontSize + 'px',
         color: color
     }).setOrigin(0.5);
     container.add(centerSuit);
     
     // Rank at bottom right (rotated)
-    const rankBottom = scene.add.text(CARD_WIDTH/2 - 10, CARD_HEIGHT/2 - 8, card.rank, {
-        fontSize: '18px',
+    const rankBottom = scene.add.text(width/2 - 10 * scale, height/2 - 8 * scale, card.rank, {
+        fontSize: fontSize + 'px',
         color: color,
         fontStyle: 'bold'
     }).setOrigin(1, 1).setRotation(Math.PI);
     container.add(rankBottom);
     
     if (interactive) {
-        container.setInteractive(new Phaser.Geom.Rectangle(-CARD_WIDTH/2, -CARD_HEIGHT/2, CARD_WIDTH, CARD_HEIGHT), Phaser.Geom.Rectangle.Contains);
+        container.setInteractive(new Phaser.Geom.Rectangle(-width/2, -height/2, width, height), Phaser.Geom.Rectangle.Contains);
         
         container.on('pointerover', () => {
             if (isMyTurn()) {

@@ -24,6 +24,12 @@ const GAME_STATES = {
     GAME_END: 'game_end'
 };
 
+// Big 2 specific constants
+// Big 2 card ranking: 3 is smallest, 2 is biggest
+const BIG2_RANKS = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'];
+// Big 2 suit ranking (ascending strength): diamond < clubs < hearts < spades
+const BIG2_SUIT_ORDER = { 'diamonds': 0, 'clubs': 1, 'hearts': 2, 'spades': 3 };
+
 // Client connections and game rooms
 const clients = new Map(); // ws -> clientData
 const rooms = new Map(); // roomId -> roomData
@@ -123,7 +129,7 @@ function handleMessage(ws, data) {
             break;
             
         case 'createRoom':
-            createRoom(ws, client);
+            createRoom(ws, client, data.gameType || 'hearts');
             break;
             
         case 'joinRoom':
@@ -135,7 +141,11 @@ function handleMessage(ws, data) {
             break;
             
         case 'playCard':
-            playCard(ws, client, data.card);
+            playCard(ws, client, data.card || data.cards);
+            break;
+            
+        case 'pass':
+            handleBig2Pass(ws, client);
             break;
             
         case 'leaveRoom':
@@ -181,11 +191,12 @@ function handleDisconnect(ws) {
     clients.delete(ws);
 }
 
-function createRoom(ws, client) {
+function createRoom(ws, client, gameType = 'hearts') {
     const roomId = generateId().slice(0, 6).toUpperCase();
     
     const room = {
         id: roomId,
+        gameType: gameType, // 'hearts' or 'big2'
         players: [{
             id: client.id,
             name: client.name,
@@ -201,7 +212,10 @@ function createRoom(ws, client) {
         leadSuit: null,
         roundNumber: 0,
         maxScore: 100,
-        heartsBroken: false
+        heartsBroken: false,
+        // Big 2 specific
+        currentPlay: [],       // Current play on table
+        lastPlayerToPlay: null // Who made the last play (for initiative)
     };
     
     rooms.set(roomId, room);
@@ -210,10 +224,11 @@ function createRoom(ws, client) {
     sendToClient(ws, {
         type: 'roomCreated',
         roomId: roomId,
+        gameType: gameType,
         players: room.players.map(p => ({ id: p.id, name: p.name, isAI: p.isAI }))
     });
     
-    console.log(`Room ${roomId} created by ${client.name}`);
+    console.log(`Room ${roomId} (${gameType}) created by ${client.name}`);
 }
 
 function joinRoom(ws, client, roomId) {
@@ -293,6 +308,12 @@ function startGame(ws, client) {
 }
 
 function initializeGame(room) {
+    // Route to Big 2 initialization if needed
+    if (room.gameType === 'big2') {
+        initializeBig2Game(room);
+        return;
+    }
+    
     room.gameState = GAME_STATES.DEALING;
     room.roundNumber++;
     room.heartsBroken = false;
@@ -388,6 +409,262 @@ function sortHand(hand) {
     });
 }
 
+// ===== Big 2 Helper Functions =====
+
+/**
+ * Get Big 2 card value for comparison
+ * Higher value = stronger card
+ * Ranking: 3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A < 2
+ */
+function getBig2CardValue(card) {
+    const rankValue = BIG2_RANKS.indexOf(card.rank);
+    const suitValue = BIG2_SUIT_ORDER[card.suit];
+    // Combine rank and suit: rank * 4 + suit gives unique ordering
+    return rankValue * 4 + suitValue;
+}
+
+/**
+ * Compare two Big 2 cards. Returns:
+ *  1 if a > b
+ * -1 if a < b
+ *  0 if equal
+ */
+function compareBig2Cards(a, b) {
+    const valA = getBig2CardValue(a);
+    const valB = getBig2CardValue(b);
+    return valA - valB;
+}
+
+/**
+ * Check if cards form a valid Big 2 play
+ * Valid plays: single (1), pair (2), or poker hand (5 cards)
+ * Poker hands: straight, flush, full house, straight flush, 4 of a kind + 1
+ * Triples are NOT allowed
+ */
+function isValidBig2Play(cards) {
+    if (!cards || cards.length === 0) return { valid: false, reason: 'No cards selected' };
+    
+    const count = cards.length;
+    
+    if (count === 1) {
+        return { valid: true, type: 'single' };
+    }
+    
+    if (count === 2) {
+        if (cards[0].rank === cards[1].rank) {
+            return { valid: true, type: 'pair' };
+        }
+        return { valid: false, reason: 'Pair must have same rank' };
+    }
+    
+    if (count === 5) {
+        return validateBig2FiveCard(cards);
+    }
+    
+    // 3 cards (triple) or 4 cards not allowed
+    return { valid: false, reason: 'Invalid play: must play 1, 2, or 5 cards' };
+}
+
+/**
+ * Validate 5-card Big 2 hand
+ */
+function validateBig2FiveCard(cards) {
+    const ranks = cards.map(c => c.rank);
+    const suits = cards.map(c => c.suit);
+    
+    // Count ranks
+    const rankCounts = {};
+    ranks.forEach(r => rankCounts[r] = (rankCounts[r] || 0) + 1);
+    const counts = Object.values(rankCounts).sort((a, b) => b - a);
+    
+    // Check for 4 of a kind + 1 (bomb)
+    if (counts[0] === 4) {
+        return { valid: true, type: 'four_of_a_kind' };
+    }
+    
+    // Check for full house (3 + 2)
+    if (counts[0] === 3 && counts[1] === 2) {
+        return { valid: true, type: 'full_house' };
+    }
+    
+    // Check for flush (all same suit)
+    const isFlush = suits.every(s => s === suits[0]);
+    
+    // Check for straight (5 consecutive ranks)
+    const sortedRanks = [...ranks].sort((a, b) => BIG2_RANKS.indexOf(a) - BIG2_RANKS.indexOf(b));
+    const isStraight = sortedRanks.every((r, i) => 
+        i === 0 || BIG2_RANKS.indexOf(r) === BIG2_RANKS.indexOf(sortedRanks[i-1]) + 1
+    );
+    
+    // Straight flush
+    if (isFlush && isStraight) {
+        return { valid: true, type: 'straight_flush' };
+    }
+    
+    // Flush
+    if (isFlush) {
+        return { valid: true, type: 'flush' };
+    }
+    
+    // Straight
+    if (isStraight) {
+        return { valid: true, type: 'straight' };
+    }
+    
+    return { valid: false, reason: '5 cards must form a straight, flush, full house, straight flush, or four of a kind' };
+}
+
+/**
+ * Compare two Big 2 plays. Returns:
+ *  1 if playA > playB (playA wins)
+ * -1 if playA < playB
+ *  0 if can't compare (different types)
+ */
+function compareBig2Plays(playA, playB) {
+    // Must be same number of cards
+    if (playA.length !== playB.length) return 0;
+    
+    const typeA = isValidBig2Play(playA);
+    const typeB = isValidBig2Play(playB);
+    
+    if (!typeA.valid || !typeB.valid) return 0;
+    if (typeA.type !== typeB.type) return 0; // Different types can't compare
+    
+    // Sort cards by value
+    const sortedA = [...playA].sort((a, b) => getBig2CardValue(a) - getBig2CardValue(b));
+    const sortedB = [...playB].sort((a, b) => getBig2CardValue(a) - getBig2CardValue(b));
+    
+    // For pairs and singles, compare the cards
+    if (typeA.type === 'single' || typeA.type === 'pair') {
+        const valA = getBig2CardValue(sortedA[sortedA.length - 1]); // Highest card
+        const valB = getBig2CardValue(sortedB[sortedB.length - 1]);
+        if (valA > valB) return 1;
+        if (valA < valB) return -1;
+        return 0;
+    }
+    
+    // For 5-card hands, compare by highest card (except 4 of a kind: compare the 4)
+    if (typeA.type === 'four_of_a_kind') {
+        // Find the 4 of a kind
+        const ranksA = {};
+        const ranksB = {};
+        sortedA.forEach(c => ranksA[c.rank] = (ranksA[c.rank] || 0) + 1);
+        sortedB.forEach(c => ranksB[c.rank] = (ranksB[c.rank] || 0) + 1);
+        
+        const fourRankA = Object.keys(ranksA).find(r => ranksA[r] === 4);
+        const fourRankB = Object.keys(ranksB).find(r => ranksB[r] === 4);
+        
+        const valA = BIG2_RANKS.indexOf(fourRankA);
+        const valB = BIG2_RANKS.indexOf(fourRankB);
+        
+        if (valA > valB) return 1;
+        if (valA < valB) return -1;
+        return 0;
+    }
+    
+    // For other 5-card hands, compare highest card
+    const valA = getBig2CardValue(sortedA[sortedA.length - 1]);
+    const valB = getBig2CardValue(sortedB[sortedB.length - 1]);
+    
+    if (valA > valB) return 1;
+    if (valA < valB) return -1;
+    return 0;
+}
+
+/**
+ * Check if playA can beat playB in Big 2
+ */
+function canBeatBig2Play(playA, playB) {
+    if (!playB || playB.length === 0) return true; // First play, anything valid works
+    if (playA.length !== playB.length) return false; // Must match count
+    
+    const typeA = isValidBig2Play(playA);
+    const typeB = isValidBig2Play(playB);
+    
+    if (!typeA.valid || !typeB.valid) return false;
+    if (typeA.type !== typeB.type) return false; // Must be same type
+    
+    return compareBig2Plays(playA, playB) > 0;
+}
+
+/**
+ * Initialize Big 2 game
+ */
+function initializeBig2Game(room) {
+    room.gameState = GAME_STATES.DEALING;
+    room.roundNumber++;
+    room.currentPlay = [];
+    room.lastPlayerToPlay = null;
+    
+    // Reset player hands
+    room.players.forEach(p => {
+        p.hand = [];
+    });
+    
+    // Create and shuffle deck
+    const deck = createDeck();
+    shuffleDeck(deck);
+    
+    // Deal cards (13 each)
+    for (let i = 0; i < 13; i++) {
+        room.players.forEach(player => {
+            player.hand.push(deck.shift());
+        });
+    }
+    
+    // Sort hands by Big 2 order (3 low, 2 high)
+    room.players.forEach(player => {
+        sortBig2Hand(player.hand);
+    });
+    
+    // Find who has 3 of diamonds (starts the game)
+    let startPlayerIndex = 0;
+    for (let i = 0; i < room.players.length; i++) {
+        if (room.players[i].hand.some(c => c.suit === 'diamonds' && c.rank === '3')) {
+            startPlayerIndex = i;
+            break;
+        }
+    }
+    room.currentPlayerIndex = startPlayerIndex;
+    
+    room.gameState = GAME_STATES.PLAYING;
+    
+    // Broadcast game start
+    room.players.forEach((player, index) => {
+        if (player.ws) {
+            sendToClient(player.ws, {
+                type: 'gameStarted',
+                gameType: 'big2',
+                players: room.players.map(p => ({ 
+                    id: p.id, 
+                    name: p.name, 
+                    isAI: p.isAI 
+                })),
+                yourHand: player.hand,
+                currentPlayer: room.players[room.currentPlayerIndex].id,
+                yourIndex: index,
+                mustInclude: { suit: 'diamonds', rank: '3' } // First play must include 3♦
+            });
+        }
+    });
+    
+    // AI turns
+    processBig2AITurns(room);
+    
+    console.log(`Big 2 game started in room ${room.id}`);
+}
+
+/**
+ * Sort hand by Big 2 order (3 low to 2 high)
+ */
+function sortBig2Hand(hand) {
+    hand.sort((a, b) => {
+        const valA = getBig2CardValue(a);
+        const valB = getBig2CardValue(b);
+        return valA - valB;
+    });
+}
+
 function playCard(ws, client, cardData) {
     const room = rooms.get(client.roomId);
     
@@ -395,6 +672,13 @@ function playCard(ws, client, cardData) {
         return;
     }
     
+    // Route to Big 2 play handler if needed
+    if (room.gameType === 'big2') {
+        playBig2Cards(ws, client, cardData);
+        return;
+    }
+    
+    // Hearts single card play
     const currentPlayer = room.players[room.currentPlayerIndex];
     
     if (currentPlayer.id !== client.id) {
@@ -459,6 +743,100 @@ function playCard(ws, client, cardData) {
         // Process AI turns
         processAITurns(room);
     }
+}
+
+/**
+ * Big 2 play handler - supports multiple cards
+ */
+function playBig2Cards(ws, client, cardsData) {
+    const room = rooms.get(client.roomId);
+    
+    if (!room || room.gameState !== GAME_STATES.PLAYING) {
+        return;
+    }
+    
+    const currentPlayer = room.players[room.currentPlayerIndex];
+    
+    if (currentPlayer.id !== client.id) {
+        sendToClient(ws, { type: 'error', message: 'Not your turn' });
+        return;
+    }
+    
+    // cardsData can be single card or array of cards
+    const cardsToPlay = Array.isArray(cardsData) ? cardsData : [cardsData];
+    
+    // Find all cards in hand
+    const cardIndices = [];
+    for (const cardData of cardsToPlay) {
+        const idx = currentPlayer.hand.findIndex(
+            c => c.suit === cardData.suit && c.rank === cardData.rank
+        );
+        if (idx === -1) {
+            sendToClient(ws, { type: 'error', message: 'Card not in hand: ' + cardData.rank + cardData.suit });
+            return;
+        }
+        cardIndices.push(idx);
+    }
+    
+    // Validate the play
+    const playValidation = isValidBig2Play(cardsToPlay);
+    if (!playValidation.valid) {
+        sendToClient(ws, { type: 'error', message: playValidation.reason });
+        return;
+    }
+    
+    // Check if first play must include 3♦
+    if (room.currentPlay.length === 0 && room.lastPlayerToPlay === null) {
+        const hasThreeDiamond = cardsToPlay.some(c => c.suit === 'diamonds' && c.rank === '3');
+        if (!hasThreeDiamond) {
+            sendToClient(ws, { type: 'error', message: 'First play must include 3 of diamonds' });
+            return;
+        }
+    }
+    
+    // Check if can beat current play
+    if (!canBeatBig2Play(cardsToPlay, room.currentPlay)) {
+        sendToClient(ws, { type: 'error', message: 'Cannot beat current play' });
+        return;
+    }
+    
+    // Remove cards from hand (reverse order to maintain indices)
+    cardIndices.sort((a, b) => b - a);
+    cardIndices.forEach(idx => currentPlayer.hand.splice(idx, 1));
+    
+    // Update current play
+    room.currentPlay = cardsToPlay;
+    room.lastPlayerToPlay = currentPlayer;
+    
+    // Broadcast cards played
+    broadcastToRoom(room.id, {
+        type: 'cardsPlayed',
+        playerId: currentPlayer.id,
+        cards: cardsToPlay,
+        playType: playValidation.type,
+        handSize: currentPlayer.hand.length
+    });
+    
+    // Check if player won (empty hand)
+    if (currentPlayer.hand.length === 0) {
+        completeBig2Game(room, currentPlayer);
+        return;
+    }
+    
+    // Next player
+    room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length;
+    
+    // Check if all other players passed (can't follow)
+    // For simplicity, just pass to next player
+    broadcastToRoom(room.id, {
+        type: 'turnChanged',
+        currentPlayer: room.players[room.currentPlayerIndex].id,
+        currentPlay: room.currentPlay,
+        canFollow: true
+    });
+    
+    // Process AI turns
+    processBig2AITurns(room);
 }
 
 function validatePlay(room, player, card) {
@@ -718,6 +1096,197 @@ function getValidCards(room, player) {
     }
     
     return cards;
+}
+
+/**
+ * Handle Big 2 pass (skip turn)
+ */
+function handleBig2Pass(ws, client) {
+    const room = rooms.get(client.roomId);
+    
+    if (!room || room.gameType !== 'big2' || room.gameState !== GAME_STATES.PLAYING) {
+        return;
+    }
+    
+    const currentPlayer = room.players[room.currentPlayerIndex];
+    
+    if (currentPlayer.id !== client.id) {
+        sendToClient(ws, { type: 'error', message: 'Not your turn' });
+        return;
+    }
+    
+    // Can't pass if you're the last player to play (you have initiative)
+    if (room.lastPlayerToPlay && room.lastPlayerToPlay.id === client.id) {
+        sendToClient(ws, { type: 'error', message: 'You have initiative, you must play' });
+        return;
+    }
+    
+    // Can't pass if there's no current play (first play of round)
+    if (room.currentPlay.length === 0 && room.lastPlayerToPlay === null) {
+        sendToClient(ws, { type: 'error', message: 'Must play on first turn' });
+        return;
+    }
+    
+    // Broadcast pass
+    broadcastToRoom(room.id, {
+        type: 'playerPassed',
+        playerId: client.id
+    });
+    
+    // Next player
+    room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length;
+    
+    // Check if back to last player to play (everyone passed)
+    if (room.players[room.currentPlayerIndex].id === room.lastPlayerToPlay?.id) {
+        // Everyone passed, last player gets initiative
+        broadcastToRoom(room.id, {
+            type: 'initiativeGained',
+            playerId: room.lastPlayerToPlay.id,
+            message: 'Everyone passed! Play anything.'
+        });
+        room.currentPlay = [];
+        
+        broadcastToRoom(room.id, {
+            type: 'turnChanged',
+            currentPlayer: room.lastPlayerToPlay.id,
+            currentPlay: [],
+            canFollow: false
+        });
+        
+        // If AI has initiative
+        if (room.lastPlayerToPlay.isAI) {
+            setTimeout(() => processBig2AITurns(room), 1000);
+        }
+        return;
+    }
+    
+    broadcastToRoom(room.id, {
+        type: 'turnChanged',
+        currentPlayer: room.players[room.currentPlayerIndex].id,
+        currentPlay: room.currentPlay,
+        canFollow: true
+    });
+    
+    processBig2AITurns(room);
+}
+
+/**
+ * Process AI turns for Big 2
+ */
+function processBig2AITurns(room) {
+    const currentPlayer = room.players[room.currentPlayerIndex];
+    
+    if (!currentPlayer || !currentPlayer.isAI) return;
+    
+    setTimeout(() => {
+        if (room.gameState !== GAME_STATES.PLAYING) return;
+        
+        // AI decision: try to play a valid card/play
+        const validPlays = getValidBig2Plays(room, currentPlayer);
+        
+        if (validPlays.length === 0) {
+            // Must pass
+            handleBig2Pass(null, { id: currentPlayer.id, roomId: room.id });
+            return;
+        }
+        
+        // AI strategy: play smallest valid play
+        const play = validPlays[0];
+        
+        // Simulate play
+        play.forEach(card => {
+            const idx = currentPlayer.hand.findIndex(
+                c => c.suit === card.suit && c.rank === card.rank
+            );
+            if (idx !== -1) currentPlayer.hand.splice(idx, 1);
+        });
+        
+        room.currentPlay = play;
+        room.lastPlayerToPlay = currentPlayer;
+        
+        const playType = isValidBig2Play(play);
+        
+        broadcastToRoom(room.id, {
+            type: 'cardsPlayed',
+            playerId: currentPlayer.id,
+            cards: play,
+            playType: playType.type,
+            handSize: currentPlayer.hand.length
+        });
+        
+        // Check win
+        if (currentPlayer.hand.length === 0) {
+            completeBig2Game(room, currentPlayer);
+            return;
+        }
+        
+        room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length;
+        
+        broadcastToRoom(room.id, {
+            type: 'turnChanged',
+            currentPlayer: room.players[room.currentPlayerIndex].id,
+            currentPlay: room.currentPlay
+        });
+        
+        processBig2AITurns(room);
+    }, 800);
+}
+
+/**
+ * Get valid Big 2 plays for AI
+ */
+function getValidBig2Plays(room, player) {
+    const plays = [];
+    
+    // Try singles
+    for (const card of player.hand) {
+        if (canBeatBig2Play([card], room.currentPlay)) {
+            plays.push([card]);
+        }
+    }
+    
+    // Try pairs
+    const rankGroups = {};
+    player.hand.forEach(c => {
+        rankGroups[c.rank] = rankGroups[c.rank] || [];
+        rankGroups[c.rank].push(c);
+    });
+    
+    for (const rank in rankGroups) {
+        if (rankGroups[rank].length >= 2) {
+            const pair = rankGroups[rank].slice(0, 2);
+            if (canBeatBig2Play(pair, room.currentPlay)) {
+                plays.push(pair);
+            }
+        }
+    }
+    
+    // Try 5-card hands (simplified: just try combinations)
+    // For AI, we'll keep it simple and just return singles/pairs if valid
+    // A full implementation would check all 5-card combinations
+    
+    return plays;
+}
+
+/**
+ * Complete Big 2 game when someone wins
+ */
+function completeBig2Game(room, winner) {
+    room.gameState = GAME_STATES.GAME_END;
+    
+    // Calculate rankings
+    const rankings = room.players
+        .map(p => ({ id: p.id, name: p.name, cardsLeft: p.hand.length }))
+        .sort((a, b) => a.cardsLeft - b.cardsLeft);
+    
+    broadcastToRoom(room.id, {
+        type: 'gameComplete',
+        gameType: 'big2',
+        winner: { id: winner.id, name: winner.name },
+        rankings: rankings
+    });
+    
+    console.log(`Big 2 game completed in room ${room.id}. Winner: ${winner.name}`);
 }
 
 function leaveRoom(ws, client) {

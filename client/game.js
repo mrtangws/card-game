@@ -589,7 +589,7 @@ function showNewGameButton() {
     if (!newGameDiv) {
         newGameDiv = document.createElement('div');
         newGameDiv.id = 'newGameDiv';
-        newGameDiv.style.cssText = 'position:fixed; bottom:180px; left:50%; transform:translateX(-50%); z-index:60;';
+        newGameDiv.style.cssText = 'position:fixed; bottom:220px; left:50%; transform:translateX(-50%); z-index:60;';
         
         const btn = document.createElement('button');
         btn.id = 'newGameBtn';
@@ -607,6 +607,11 @@ function showNewGameButton() {
 function clickNewGame() {
     // Tell server we want to start new game
     sendMessage({ type: 'newGame' });
+    // Hide the button so it doesn't block the new game
+    const newGameDiv = document.getElementById('newGameDiv');
+    if (newGameDiv) {
+        newGameDiv.style.display = 'none';
+    }
 }
 
 function showBig2Rankings(rankings) {
@@ -733,7 +738,7 @@ function updatePlayHistoryPanel() {
         // Create panel
         panel = document.createElement('div');
         panel.id = 'playHistoryPanel';
-        panel.style.cssText = 'position:fixed; top:180px; right:20px; width:200px; max-height:400px; overflow-y:auto; background:rgba(0,0,0,0.8); color:white; padding:15px; border-radius:10px; font-size:13px; z-index:50;';
+        panel.style.cssText = 'position:fixed; top:220px; right:20px; width:200px; max-height:400px; overflow-y:auto; background:rgba(0,0,0,0.8); color:white; padding:15px; border-radius:10px; font-size:13px; z-index:50;';
         panel.innerHTML = '<h4 style="margin:0 0 10px 0; color:#fff;">Play History</h4><div id="playHistoryList"></div>';
         document.body.appendChild(panel);
     }

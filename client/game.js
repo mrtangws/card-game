@@ -43,6 +43,7 @@ let game;
 let scene;
 let cardSprites = [];
 let trickSprites = [];
+let playedCardsSprites = []; // Big 2: cards played on table (messy stack)
 
 // Card dimensions
 const CARD_WIDTH = 100;
@@ -135,6 +136,9 @@ function handleServerMessage(data) {
             currentPlayerId = data.currentPlayer;
             selectedCards = [];
             currentPlay = [];
+            // Clear any previous played cards
+            playedCardsSprites.forEach(s => s && s.destroy());
+            playedCardsSprites = [];
             hideLobby();
             showGameUI();
             updatePlayerList();
@@ -334,6 +338,14 @@ function renderHand() {
 function createCardSprite(x, y, card, interactive = false, width = CARD_WIDTH, height = CARD_HEIGHT) {
     const container = scene.add.container(x, y);
     
+    // Selection outline (hidden by default)
+    const selectionOutline = scene.add.graphics();
+    selectionOutline.lineStyle(4, 0xffff00, 1); // Yellow outline
+    selectionOutline.strokeRoundedRect(-width/2 - 4, -height/2 - 4, width + 8, height + 8, 10);
+    selectionOutline.visible = false;
+    container.add(selectionOutline);
+    container.selectionOutline = selectionOutline; // Store reference
+    
     // Card background
     const bg = scene.add.graphics();
     bg.fillStyle(0xffffff, 1);
@@ -419,12 +431,12 @@ function toggleCardSelection(card, container) {
         // Deselect
         selectedCards.splice(idx, 1);
         container.setY(container.y + 20); // Move down
-        container.setTint(0xffffff); // Remove tint
+        if (container.selectionOutline) container.selectionOutline.visible = false;
     } else {
         // Select
         selectedCards.push(card);
         container.setY(container.y - 20); // Move up
-        container.setTint(0xffff00); // Yellow tint for selected
+        if (container.selectionOutline) container.selectionOutline.visible = true;
     }
     
     // Update play button state
@@ -528,6 +540,10 @@ function handleRoundComplete(data) {
 }
 
 function handleGameComplete(data) {
+    // Clear played cards table
+    playedCardsSprites.forEach(s => s && s.destroy());
+    playedCardsSprites = [];
+    
     // Handle Big 2 game complete
     if (data.gameType === 'big2') {
         const winner = data.winner;
@@ -586,10 +602,47 @@ function handleCardsPlayed(data) {
         renderHand();
     }
     
+    // Render played cards on table (messy/natural look)
+    renderPlayedCards(data.cards);
+    
     showStatus(`${player?.name || 'Player'} played ${data.playType || data.cards.length} card(s)`, 2000);
     
     // Update current play display
     updateCurrentPlayDisplay(data.cards);
+}
+
+function renderPlayedCards(cards) {
+    if (!scene) return;
+    
+    // Get center of table
+    const centerX = scene.scale.width / 2;
+    const centerY = scene.scale.height / 2;
+    
+    // Calculate offset for this batch (stack slightly offset from previous)
+    const batchOffsetX = (playedCardsSprites.length % 5) * 15 - 30;
+    const batchOffsetY = Math.floor(playedCardsSprites.length / 5) * 10;
+    
+    cards.forEach((card, i) => {
+        // Random "messy" offsets for natural look
+        const offsetX = batchOffsetX + (Math.random() - 0.5) * 40 + i * 25;
+        const offsetY = batchOffsetY + (Math.random() - 0.5) * 30;
+        const rotation = (Math.random() - 0.5) * 0.3; // Slight rotation
+        
+        const x = centerX + offsetX;
+        const y = centerY + offsetY;
+        
+        const cardSprite = createCardSprite(x, y, card, false, CARD_WIDTH * 0.8, CARD_HEIGHT * 0.8);
+        cardSprite.setRotation(rotation);
+        cardSprite.setDepth(50 + playedCardsSprites.length); // Stack on top
+        
+        playedCardsSprites.push(cardSprite);
+    });
+    
+    // Limit total cards on table to prevent clutter (keep last ~15)
+    while (playedCardsSprites.length > 15) {
+        const old = playedCardsSprites.shift();
+        if (old) old.destroy();
+    }
 }
 
 function handlePlayerPassed(data) {
@@ -602,6 +655,9 @@ function handleInitiativeGained(data) {
     showStatus(`Everyone passed! ${player?.name || 'Player'} has initiative!`, 2500);
     currentPlay = [];
     updateCurrentPlayDisplay([]);
+    // Clear played cards table for new round
+    playedCardsSprites.forEach(s => s && s.destroy());
+    playedCardsSprites = [];
 }
 
 function showFinalScores(scores) {

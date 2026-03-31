@@ -10,7 +10,7 @@ let ws = null;
 let clientId = null;
 let playerName = localStorage.getItem('cardGamePlayerName') || 'Player';
 let roomId = null;
-let gameType = 'hearts'; // 'hearts' or 'big2'
+let gameType = 'hearts'; // 'hearts', 'big2', or 'snake'
 let players = [];
 let myHand = [];
 let myIndex = 0;
@@ -21,6 +21,15 @@ let selectedCards = []; // For Big 2 multi-card selection
 let currentPlay = [];   // Current play on table (Big 2)
 let canFollow = true;   // Whether you can follow current play (Big 2)
 let playHistory = [];   // Last 10 plays for Big 2
+
+// Snake game state
+let snakeGame = null;
+let snakeGridWidth = 40;
+let snakeGridHeight = 30;
+let snakeCellSize = 20;
+let snakeGraphics = null;
+let snakeScoreTexts = [];
+let maxPlayers = 4;
 
 // Phaser config
 const config = {
@@ -115,12 +124,14 @@ function handleServerMessage(data) {
         case 'roomCreated':
             roomId = data.roomId;
             gameType = data.gameType || 'hearts';
+            maxPlayers = data.maxPlayers || 4;
             players = data.players;
             showRoomInfo();
             break;
             
         case 'roomJoined':
             roomId = data.roomId;
+            maxPlayers = data.maxPlayers || 4;
             players = data.players;
             showRoomInfo();
             break;
@@ -138,6 +149,18 @@ function handleServerMessage(data) {
             gameStarted = true;
             gameType = data.gameType || 'hearts';
             players = data.players;
+            
+            // Handle Snake game start
+            if (gameType === 'snake') {
+                snakeGridWidth = data.gridWidth || 40;
+                snakeGridHeight = data.gridHeight || 30;
+                initSnakeGame();
+                hideLobby();
+                showSnakeUI();
+                updatePlayerList();
+                break;
+            }
+            
             myHand = data.yourHand;
             myIndex = data.yourIndex;
             currentPlayerId = data.currentPlayer;
@@ -190,6 +213,15 @@ function handleServerMessage(data) {
             handleInitiativeGained(data);
             break;
             
+        // Snake specific messages
+        case 'snakeState':
+            handleSnakeState(data);
+            break;
+            
+        case 'snakeDied':
+            handleSnakeDied(data);
+            break;
+            
         case 'error':
             showError(data.message);
             break;
@@ -234,6 +266,14 @@ function showRoomInfo() {
     document.getElementById('roomInfo').style.display = 'block';
     document.getElementById('roomIdDisplay').textContent = roomId;
     document.getElementById('playerCount').textContent = players.length;
+    
+    // Update max players display
+    const maxPlayersDisplay = maxPlayers || 4;
+    const roomInfo = document.getElementById('roomInfo');
+    const playerCountPara = roomInfo.querySelector('p:nth-of-type(2)');
+    if (playerCountPara) {
+        playerCountPara.innerHTML = `<span id="playerCount">${players.length}</span>/${maxPlayersDisplay} players`;
+    }
     
     // Show start button only for host (first player)
     if (players.length > 0 && players[0].id === clientId) {
@@ -959,4 +999,306 @@ function drawTable() {
 
 function update() {
     // Game loop - nothing needed here for now
+}
+
+// ==================== SNAKE GAME FUNCTIONS ====================
+
+function initSnakeGame() {
+    snakeGame = {
+        snakes: {},
+        food: [],
+        tick: 0
+    };
+    
+    // Clear existing graphics
+    if (snakeGraphics) {
+        snakeGraphics.destroy();
+    }
+    snakeGraphics = scene.add.graphics();
+    
+    // Clear score texts
+    snakeScoreTexts.forEach(t => t.destroy());
+    snakeScoreTexts = [];
+    
+    // Calculate cell size to fit screen
+    const margin = 100;
+    const availableWidth = scene.scale.width - margin * 2;
+    const availableHeight = scene.scale.height - margin * 2;
+    
+    snakeCellSize = Math.min(
+        Math.floor(availableWidth / snakeGridWidth),
+        Math.floor(availableHeight / snakeGridHeight),
+        25 // Max cell size
+    );
+    
+    // Draw initial empty grid
+    drawSnakeGrid();
+    
+    // Set up keyboard input
+    setupSnakeInput();
+}
+
+function setupSnakeInput() {
+    // Remove any existing listeners
+    scene.input.keyboard.removeAllListeners();
+    
+    // Add keyboard listeners for arrow keys and WASD
+    scene.input.keyboard.on('keydown-UP', () => sendSnakeDirection('up'));
+    scene.input.keyboard.on('keydown-DOWN', () => sendSnakeDirection('down'));
+    scene.input.keyboard.on('keydown-LEFT', () => sendSnakeDirection('left'));
+    scene.input.keyboard.on('keydown-RIGHT', () => sendSnakeDirection('right'));
+    scene.input.keyboard.on('keydown-W', () => sendSnakeDirection('up'));
+    scene.input.keyboard.on('keydown-S', () => sendSnakeDirection('down'));
+    scene.input.keyboard.on('keydown-A', () => sendSnakeDirection('left'));
+    scene.input.keyboard.on('keydown-D', () => sendSnakeDirection('right'));
+}
+
+function sendSnakeDirection(direction) {
+    if (!gameStarted || gameType !== 'snake') return;
+    sendMessage({ type: 'snakeDirection', direction: direction });
+}
+
+function handleSnakeState(data) {
+    if (!snakeGame) return;
+    
+    snakeGame.tick = data.tick;
+    snakeGame.snakes = {};
+    
+    // Update snakes
+    data.snakes.forEach(snake => {
+        snakeGame.snakes[snake.id] = snake;
+    });
+    
+    snakeGame.food = data.food;
+    
+    // Render
+    renderSnakeGame();
+    updateSnakeScoreboard();
+}
+
+function handleSnakeDied(data) {
+    showStatus(`${data.playerName} died! Score: ${data.score}`, 2000);
+}
+
+function drawSnakeGrid() {
+    if (!scene || !snakeGraphics) return;
+    
+    snakeGraphics.clear();
+    
+    const gridPixelWidth = snakeGridWidth * snakeCellSize;
+    const gridPixelHeight = snakeGridHeight * snakeCellSize;
+    const startX = (scene.scale.width - gridPixelWidth) / 2;
+    const startY = (scene.scale.height - gridPixelHeight) / 2;
+    
+    // Draw background
+    snakeGraphics.fillStyle(0x111111, 1);
+    snakeGraphics.fillRect(startX, startY, gridPixelWidth, gridPixelHeight);
+    
+    // Draw grid lines
+    snakeGraphics.lineStyle(1, 0x333333, 0.5);
+    
+    // Vertical lines
+    for (let x = 0; x <= snakeGridWidth; x++) {
+        const px = startX + x * snakeCellSize;
+        snakeGraphics.moveTo(px, startY);
+        snakeGraphics.lineTo(px, startY + gridPixelHeight);
+    }
+    
+    // Horizontal lines
+    for (let y = 0; y <= snakeGridHeight; y++) {
+        const py = startY + y * snakeCellSize;
+        snakeGraphics.moveTo(startX, py);
+        snakeGraphics.lineTo(startX + gridPixelWidth, py);
+    }
+    snakeGraphics.strokePath();
+    
+    // Draw border
+    snakeGraphics.lineStyle(3, 0x666666, 1);
+    snakeGraphics.strokeRect(startX, startY, gridPixelWidth, gridPixelHeight);
+}
+
+function renderSnakeGame() {
+    if (!scene || !snakeGraphics || !snakeGame) return;
+    
+    drawSnakeGrid();
+    
+    const gridPixelWidth = snakeGridWidth * snakeCellSize;
+    const gridPixelHeight = snakeGridHeight * snakeCellSize;
+    const startX = (scene.scale.width - gridPixelWidth) / 2;
+    const startY = (scene.scale.height - gridPixelHeight) / 2;
+    
+    // Draw food
+    snakeGraphics.fillStyle(0xff0000, 1);
+    snakeGame.food.forEach(food => {
+        const fx = startX + food.x * snakeCellSize + snakeCellSize / 2;
+        const fy = startY + food.y * snakeCellSize + snakeCellSize / 2;
+        const radius = snakeCellSize * 0.3;
+        snakeGraphics.fillCircle(fx, fy, radius);
+    });
+    
+    // Draw snakes
+    for (const snakeId in snakeGame.snakes) {
+        const snake = snakeGame.snakes[snakeId];
+        if (!snake.alive && snake.body.length === 0) continue;
+        
+        const color = snake.color || 0x00ff00;
+        const isMe = snakeId === clientId;
+        
+        // Body
+        snakeGraphics.fillStyle(color, snake.alive ? 1 : 0.3);
+        
+        snake.body.forEach((seg, index) => {
+            const sx = startX + seg.x * snakeCellSize;
+            const sy = startY + seg.y * snakeCellSize;
+            const padding = 1;
+            
+            // Head is slightly different
+            if (index === 0 && snake.alive) {
+                snakeGraphics.fillStyle(color, 1);
+                snakeGraphics.fillRect(sx, sy, snakeCellSize, snakeCellSize);
+                // Draw eyes based on direction
+                drawSnakeEyes(sx, sy, snake.direction, color);
+                snakeGraphics.fillStyle(color, 0.8);
+            } else {
+                snakeGraphics.fillRect(sx + padding, sy + padding, 
+                    snakeCellSize - padding * 2, snakeCellSize - padding * 2);
+            }
+        });
+    }
+}
+
+function drawSnakeEyes(x, y, direction, color) {
+    const eyeSize = Math.max(2, snakeCellSize * 0.15);
+    const offset = snakeCellSize * 0.25;
+    const center = snakeCellSize / 2;
+    
+    snakeGraphics.fillStyle(0xffffff, 1);
+    
+    let eye1x, eye1y, eye2x, eye2y;
+    
+    switch (direction) {
+        case 'up':
+            eye1x = x + offset; eye1y = y + offset;
+            eye2x = x + snakeCellSize - offset; eye2y = y + offset;
+            break;
+        case 'down':
+            eye1x = x + offset; eye1y = y + snakeCellSize - offset;
+            eye2x = x + snakeCellSize - offset; eye2y = y + snakeCellSize - offset;
+            break;
+        case 'left':
+            eye1x = x + offset; eye1y = y + offset;
+            eye2x = x + offset; eye2y = y + snakeCellSize - offset;
+            break;
+        case 'right':
+            eye1x = x + snakeCellSize - offset; eye1y = y + offset;
+            eye2x = x + snakeCellSize - offset; eye2y = y + snakeCellSize - offset;
+            break;
+        default:
+            eye1x = x + offset; eye1y = y + offset;
+            eye2x = x + snakeCellSize - offset; eye2y = y + offset;
+    }
+    
+    snakeGraphics.fillCircle(eye1x, eye1y, eyeSize);
+    snakeGraphics.fillCircle(eye2x, eye2y, eyeSize);
+}
+
+function updateSnakeScoreboard() {
+    // Remove old score texts
+    snakeScoreTexts.forEach(t => t.destroy());
+    snakeScoreTexts = [];
+    
+    if (!snakeGame) return;
+    
+    const sortedSnakes = Object.values(snakeGame.snakes)
+        .sort((a, b) => b.score - a.score);
+    
+    let y = 80;
+    sortedSnakes.forEach((snake, index) => {
+        const colorHex = '#' + (snake.color || 0x00ff00).toString(16).padStart(6, '0');
+        const isMe = snake.id === clientId;
+        const aliveIndicator = snake.alive ? '●' : '○';
+        
+        const text = scene.add.text(20, y, `${aliveIndicator} ${snake.name}: ${snake.score}`, {
+            fontSize: '16px',
+            color: colorHex,
+            fontStyle: isMe ? 'bold' : 'normal',
+            backgroundColor: isMe ? 'rgba(255,255,255,0.2)' : 'transparent',
+            padding: { x: 5, y: 2 }
+        });
+        
+        snakeScoreTexts.push(text);
+        y += 25;
+    });
+}
+
+function showSnakeUI() {
+    // Hide card game elements
+    document.getElementById('players').style.display = 'block';
+    document.getElementById('instructions').style.display = 'block';
+    
+    // Update instructions for Snake
+    const list = document.getElementById('instructionsList');
+    if (list) {
+        list.innerHTML = `
+            <li>Use Arrow Keys or WASD to move</li>
+            <li>Eat red food to grow and score</li>
+            <li>Avoid walls and other snakes</li>
+            <li>Last snake alive wins!</li>
+        `;
+    }
+    
+    // Clear the table background for Snake
+    if (scene) {
+        scene.children.removeAll(true);
+        snakeGraphics = scene.add.graphics();
+    }
+}
+
+// Override handleGameComplete for Snake
+const originalHandleGameComplete = handleGameComplete;
+handleGameComplete = function(data) {
+    if (data.gameType === 'snake') {
+        // Stop Snake game
+        if (snakeGame) {
+            snakeGame = null;
+        }
+        
+        // Show winner
+        if (data.winner) {
+            showStatus(`🏆 ${data.winner.name} wins Snake with ${data.winner.score} points!`, 5000);
+        } else {
+            showStatus(`🏆 Game Over! It's a draw!`, 5000);
+        }
+        
+        // Show rankings
+        if (data.rankings) {
+            showSnakeRankings(data.rankings);
+        }
+        
+        gameStarted = false;
+        showNewGameButton();
+        return;
+    }
+    
+    // Call original for other games
+    originalHandleGameComplete(data);
+};
+
+function showSnakeRankings(rankings) {
+    const scoresDiv = document.getElementById('scores');
+    scoresDiv.style.display = 'block';
+    
+    let html = '<h3>Snake Results</h3><table><tr><th>Rank</th><th>Player</th><th>Score</th><th>Status</th></tr>';
+    rankings.forEach((r, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
+        const status = r.alive ? 'Survived' : 'Died';
+        const statusColor = r.alive ? 'green' : 'red';
+        html += `<tr><td>${i+1} ${medal}</td><td>${r.name}</td><td>${r.score}</td><td style="color:${statusColor}">${status}</td></tr>`;
+    });
+    html += '</table>';
+    scoresDiv.innerHTML = html;
+    
+    setTimeout(() => {
+        scoresDiv.style.display = 'none';
+    }, 10000);
 }

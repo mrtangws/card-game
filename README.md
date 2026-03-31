@@ -1,16 +1,25 @@
-# Turn-Based Card Game (Hearts)
+# Multiplayer Game Server
 
-A multiplayer turn-based card game similar to Hearts, built with Node.js server and Phaser.js frontend.
+A multiplayer game server supporting turn-based card games (Hearts, Big 2) and real-time arcade games (Snake), built with Node.js server and Phaser.js frontend.
 
 ## Features
 
-- 🎴 **Hearts-style card game** with standard 52-card deck
-- 👥 **Multiplayer support** via WebSocket
-- 🤖 **AI opponents** - play with 1-3 AI players
+### Card Games
+- 🎴 **Hearts** - Classic trick-taking card game
+- 🃏 **Big 2** - Popular Asian card game with poker hands
+- 🤖 **AI opponents** - play with AI players
 - 🎮 **Interactive Phaser frontend** - click to play cards
-- 📊 **Scoring system** - avoid hearts (1 pt each) and Queen of Spades (13 pts)
-- 🌙 **Shooting the Moon** - take all hearts + Q♠ to give opponents 26 points
-- 🔄 **Turn-based gameplay** with proper Hearts rules
+
+### Arcade Games
+- 🐍 **Snake** - Real-time multiplayer Snake (up to 10 players!)
+- ⚡ **Real-time gameplay** - 10 ticks per second
+- 🎯 **Competitive** - Last snake alive wins
+- 🍎 **Food collection** - Grow and score points
+
+### General
+- 👥 **Multiplayer support** via WebSocket
+- 🏠 **Room system** - Create/join game rooms
+- 📊 **Score tracking** - Leaderboards and rankings
 
 ## How to Run
 
@@ -35,7 +44,9 @@ Navigate to `http://localhost:8080`
 
 ## How to Play
 
-### Game Rules (Hearts)
+### Game Rules
+
+#### Hearts
 
 1. **Dealing**: Each player gets 13 cards
 2. **First Trick**: Must play the 2 of Clubs to start
@@ -47,12 +58,31 @@ Navigate to `http://localhost:8080`
    - Lowest score wins!
 6. **Shooting the Moon**: Take ALL hearts and the Q♠ to give opponents 26 points each
 
+#### Big 2
+
+1. **Dealing**: Each player gets 13 cards
+2. **First Play**: Must include the 3 of Diamonds
+3. **Valid Plays**: Single, pair, or 5-card poker hands
+4. **No Triples**: Three of a kind not allowed
+5. **Hierarchy**: Higher card combinations beat lower ones
+6. **Winning**: First to empty hand wins!
+
+#### Snake (Multiplayer)
+
+1. **Grid**: 40x30 playing field
+2. **Movement**: Use Arrow Keys or WASD to control your snake
+3. **Food**: Eat red food to grow and gain 10 points
+4. **Collisions**: Avoid walls, other snakes, and yourself
+5. **Winning**: Last snake alive wins! (or highest score in solo)
+6. **Supports**: Up to 10 concurrent players!
+
 ### Controls
 
 - **Create Room**: Start a new game room
 - **Join Room**: Enter a room code to join
-- **Start Game**: Host can start (fills empty slots with AI)
-- **Play Card**: Click on a card in your hand when it's your turn
+- **Start Game**: Host can start (fills empty slots with AI for card games)
+- **Play Card**: Click on a card in your hand when it's your turn (card games)
+- **Snake Movement**: Arrow Keys or WASD (Snake game)
 
 ### Game Interface
 
@@ -79,11 +109,13 @@ card-game/
 
 - WebSocket server on port 8080
 - HTTP server serves static client files
-- Room management (create/join)
-- Game state management
-- Hearts rule validation
-- AI player logic
-- Score tracking
+- Room management (create/join) with configurable max players
+- Game state management for multiple game types
+- **Hearts**: Turn-based trick-taking with AI opponents
+- **Big 2**: Multi-card play with poker hand validation
+- **Snake**: Real-time 10Hz game loop supporting up to 10 concurrent players
+- Collision detection and food spawning
+- Score tracking and leaderboards
 
 ### Client Features
 
@@ -124,10 +156,19 @@ node server.js
 
 ## Future Enhancements
 
+### Card Games
 - Card passing between players
 - Full trick animation showing all 4 cards
-- Sound effects
 - Better AI strategy
+
+### Snake
+- Power-ups (speed boost, invincibility)
+- Obstacles and maze modes
+- Teams mode
+- Spectator mode after dying
+
+### General
+- Sound effects
 - Mobile touch support
-- Spectator mode
 - Chat feature
+- User accounts and persistent stats

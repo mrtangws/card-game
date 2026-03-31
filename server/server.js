@@ -191,6 +191,9 @@ function handleDisconnect(ws) {
                 if (room.gameLoopTimeout) {
                     clearTimeout(room.gameLoopTimeout);
                 }
+                if (room.foodSpawner) {
+                    clearInterval(room.foodSpawner);
+                }
                 rooms.delete(client.roomId);
             } else {
                 broadcastToRoom(client.roomId, {
@@ -298,8 +301,8 @@ function createSnakeRoom(ws, client, roomId) {
         boardWidth: 40,
         boardHeight: 30,
         targetTickRate: 100,      // ms per tick (final/fastest speed)
-        initialTickRate: 500,     // ms per tick (starting slow speed - slower initial)
-        currentTickMs: 500,       // current tick speed (starts slow, speeds up)
+        initialTickRate: 1000,    // ms per tick (starting slow - 50% slower than before)
+        currentTickMs: 1000,      // current tick speed (starts slow, speeds up)
         food: [],                 // Array of {x, y}
         maxPlayers: 10,
         gameLoopTimeout: null     // using setTimeout for variable speed
@@ -396,15 +399,21 @@ function startGame(ws, client) {
     
     // Snake: special flow - find or create a game instance
     if (room && room.gameType === 'snake') {
-        // Already in a Snake room and is host → just start
-        if (room.players[0].id === client.id) {
-            if (room.gameState === GAME_STATES.WAITING) {
-                initializeSnakeGame(room);
+        // If game is over, clear roomId and treat as new join
+        if (room.gameState === GAME_STATES.GAME_END) {
+            client.roomId = null;
+            // fall through to findOrCreate below
+        } else {
+            // Already in a Snake room and is host → just start
+            if (room.players[0].id === client.id) {
+                if (room.gameState === GAME_STATES.WAITING) {
+                    initializeSnakeGame(room);
+                }
+                return;
             }
+            // If in a room but not host, ignore (they're already in a game)
             return;
         }
-        // If in a room but not host, ignore (they're already in a game)
-        return;
     }
     
     // If not in a snake room, or room is not snake: handle Snake "find or create"
@@ -455,8 +464,8 @@ function findOrCreateSnakeGame(client) {
         viewportHeight: 30,
         // Tick/speed config
         targetTickRate: 100,
-        initialTickRate: 500,   // slower initial speed
-        currentTickMs: 500,
+        initialTickRate: 1000,  // 50% slower base speed
+        currentTickMs: 1000,
         food: [],
         maxHumans: 10,
         gameLoopTimeout: null
@@ -1671,10 +1680,22 @@ function initializeSnakeGame(room) {
     });
     
     // Reset tick speed
-    room.currentTickMs = room.initialTickRate || 500;
+    room.currentTickMs = room.initialTickRate || 1000;
     
     if (room.gameLoopTimeout) clearTimeout(room.gameLoopTimeout);
     scheduleNextSnakeTick(room);
+    
+    // Periodic apple spawning (every 2 seconds, spawn 5 apples)
+    if (room.foodSpawner) clearInterval(room.foodSpawner);
+    room.foodSpawner = setInterval(() => {
+        if (room.gameState !== GAME_STATES.PLAYING) {
+            clearInterval(room.foodSpawner);
+            room.foodSpawner = null;
+            return;
+        }
+        // Spawn 5 apples periodically
+        for (let i = 0; i < 5; i++) spawnFood(room);
+    }, 2000);
     
     console.log(`Snake game started in room ${room.id} with ${room.players.length} players`);
 }
@@ -1936,11 +1957,12 @@ function handleSnakeDeath(room, player) {
         if (player.ws) {
             sendToClient(player.ws, { type: 'snakeYouDied', roomId: room.id });
         }
-        // Remove from room after a moment
+        // Remove from room after a moment, and clear their roomId so they can start a new game
         setTimeout(() => {
             room.players = room.players.filter(p => p.id !== player.id);
-            // Free up a slot for new human (maxHumans effectively increases by 1)
-            // Actually: just leave the game running with fewer humans; findOrCreate will add new humans
+            // Clear roomId on the client object so they can join a new game
+            const clientObj = clients.get(player.ws);
+            if (clientObj) clientObj.roomId = null;
             console.log(`Human ${player.name} died and removed from Snake game ${room.id}`);
         }, 500);
     }
@@ -2044,6 +2066,11 @@ function endSnakeGame(room) {
     if (room.gameLoopTimeout) {
         clearTimeout(room.gameLoopTimeout);
         room.gameLoopTimeout = null;
+    }
+    
+    if (room.foodSpawner) {
+        clearInterval(room.foodSpawner);
+        room.foodSpawner = null;
     }
     
     // Reset restart votes for all players

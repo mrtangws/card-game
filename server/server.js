@@ -394,41 +394,156 @@ function joinRoom(ws, client, roomId) {
 function startGame(ws, client) {
     const room = rooms.get(client.roomId);
     
-    if (!room || room.players[0].id !== client.id) {
-        sendToClient(ws, { type: 'error', message: 'Only host can start the game' });
-        return;
-    }
-    
-    // Snake can start with 1+ players (no AI needed, realtime game)
-    if (room.gameType === 'snake') {
-        if (room.players.length < 1) {
-            sendToClient(ws, { type: 'error', message: 'Need at least 1 player' });
+    // Snake: special flow - find or create a game instance
+    if (room && room.gameType === 'snake') {
+        // Already in a Snake room and is host → just start
+        if (room.players[0].id === client.id) {
+            if (room.gameState === GAME_STATES.WAITING) {
+                initializeSnakeGame(room);
+            }
             return;
         }
-        initializeSnakeGame(room);
+        // If in a room but not host, ignore (they're already in a game)
         return;
     }
     
-    if (room.players.length < 2) {
-        sendToClient(ws, { type: 'error', message: 'Need at least 2 players' });
+    // If not in a snake room, or room is not snake: handle Snake "find or create"
+    // This is triggered when client clicks "Start Game" for Snake without being in a room
+    // We need to check if the client is trying to play Snake
+    // For simplicity, we'll check: if client has no roomId or room is not snake, treat as Snake start
+    // (Card games require explicit createRoom/joinRoom first)
+    
+    // Find or create a Snake game for this player
+    const snakeRoom = findOrCreateSnakeGame(client);
+    if (!snakeRoom) {
+        sendToClient(ws, { type: 'error', message: 'Could not join Snake game' });
         return;
     }
     
-    // Fill with AI if needed
-    while (room.players.length < 4) {
-        const aiIndex = room.players.filter(p => p.isAI).length;
-        room.players.push({
-            id: `ai_${generateId()}`,
-            name: `AI ${aiIndex + 1}`,
-            ws: null,
-            hand: [],
-            score: 0,
-            tricksWon: 0,
-            isAI: true
-        });
+    // If game is waiting and has players, start it (or if already running, just add player)
+    if (snakeRoom.gameState === GAME_STATES.WAITING) {
+        initializeSnakeGame(snakeRoom);
     }
     
-    initializeGame(room);
+    console.log(`${client.name} joined Snake game ${snakeRoom.id}`);
+}
+
+function findOrCreateSnakeGame(client) {
+    // Find a Snake room with < 10 humans
+    for (const [roomId, room] of rooms.entries()) {
+        if (room.gameType === 'snake' && room.gameState !== GAME_STATES.GAME_END) {
+            const humanCount = room.players.filter(p => !p.isAI).length;
+            if (humanCount < 10) {
+                // Add this player to existing game
+                addHumanToSnakeGame(room, client);
+                return room;
+            }
+        }
+    }
+    
+    // No available game: create new one with 10 AI
+    const roomId = generateId().slice(0, 6).toUpperCase();
+    const room = {
+        id: roomId,
+        gameType: 'snake',
+        players: [],
+        gameState: GAME_STATES.WAITING,
+        // World config
+        worldWidth: 1000,
+        worldHeight: 1000,
+        viewportWidth: 40,
+        viewportHeight: 30,
+        // Tick/speed config
+        targetTickRate: 100,
+        initialTickRate: 300,
+        currentTickMs: 300,
+        food: [],
+        maxHumans: 10,
+        gameLoopTimeout: null
+    };
+    
+    // Spawn 10 AI snakes
+    for (let i = 0; i < 10; i++) {
+        room.players.push(createAISnakePlayer(i));
+    }
+    
+    // Add the human player
+    addHumanToSnakeGame(room, client);
+    
+    rooms.set(roomId, room);
+    console.log(`Created new Snake game ${roomId} with 10 AI + 1 human`);
+    return room;
+}
+
+function createAISnakePlayer(index) {
+    const spawn = randomSpawnPosition(1000, 1000, 5);
+    return {
+        id: `ai_${generateId()}`,
+        name: `AI ${index + 1}`,
+        ws: null,
+        isAI: true,
+        snake: [{ x: spawn.x, y: spawn.y }],
+        direction: ['up','down','left','right'][Math.floor(Math.random()*4)],
+        nextDirection: ['up','down','left','right'][Math.floor(Math.random()*4)],
+        score: 0,
+        alive: true,
+        color: getRandomSnakeColor(),
+        aiTarget: null, // For AI pathfinding
+        aiSpeedMultiplier: 1.5 // AI starts slow (high tick = slow)
+    };
+}
+
+function addHumanToSnakeGame(room, client) {
+    const spawn = randomSpawnPosition(room.worldWidth, room.worldHeight, 5);
+    room.players.push({
+        id: client.id,
+        name: client.name,
+        ws: client.ws,
+        isAI: false,
+        snake: [{ x: spawn.x, y: spawn.y }],
+        direction: 'right',
+        nextDirection: 'right',
+        score: 0,
+        alive: true,
+        color: getRandomSnakeColor()
+    });
+    client.roomId = room.id;
+    
+    // Send game state to this player
+    sendToClient(client.ws, {
+        type: 'snakeGameJoined',
+        roomId: room.id,
+        worldWidth: room.worldWidth,
+        worldHeight: room.worldHeight,
+        viewportWidth: room.viewportWidth,
+        viewportHeight: room.viewportHeight,
+        players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            snake: p.snake,
+            score: p.score,
+            alive: p.alive,
+            isAI: p.isAI
+        })),
+        food: room.food,
+        isHuman: true
+    });
+    
+    // If game already running, broadcast new player to others
+    if (room.gameState === GAME_STATES.PLAYING) {
+        broadcastToRoom(room.id, {
+            type: 'snakePlayerJoined',
+            player: { id: client.id, name: client.name, color: room.players[room.players.length-1].color }
+        }, client.ws);
+    }
+}
+
+function randomSpawnPosition(worldW, worldH, margin) {
+    return {
+        x: margin + Math.floor(Math.random() * (worldW - margin * 2)),
+        y: margin + Math.floor(Math.random() * (worldH - margin * 2))
+    };
 }
 
 function initializeGame(room) {
@@ -1493,46 +1608,49 @@ function initializeSnakeGame(room) {
     room.gameState = GAME_STATES.PLAYING;
     room.food = [];
     
-    // Initialize each player's snake at a unique starting position
-    const startPositions = generateSnakeStartPositions(room.players.length, room.boardWidth, room.boardHeight);
+    // Use world size (new) or fallback to board size (old)
+    const worldW = room.worldWidth || room.boardWidth || 1000;
+    const worldH = room.worldHeight || room.boardHeight || 1000;
+    const margin = 5;
     
-    room.players.forEach((player, index) => {
-        const start = startPositions[index];
-        player.snake = [
-            { x: start.x, y: start.y },
-            { x: start.x - 1, y: start.y },
-            { x: start.x - 2, y: start.y }
-        ];
-        player.direction = 'right';
-        player.nextDirection = 'right';
+    room.players.forEach((player) => {
+        // Respawn each player at random position (at least 5 from edges)
+        const spawn = randomSpawnPosition(worldW, worldH, margin);
+        player.snake = [{ x: spawn.x, y: spawn.y }];
+        player.direction = ['up','down','left','right'][Math.floor(Math.random()*4)];
+        player.nextDirection = player.direction;
         player.score = 0;
         player.alive = true;
+        // Reset AI speed if AI
+        if (player.isAI) player.aiSpeedMultiplier = 1.5;
     });
     
-    // Spawn initial food
-    spawnFood(room);
-    spawnFood(room);
+    // Spawn initial food (more for bigger world)
+    const foodCount = Math.floor((worldW * worldH) / 10000); // ~100 for 1000x1000
+    for (let i = 0; i < foodCount; i++) spawnFood(room);
     
-    // Broadcast game start
+    // Broadcast game start with world size
     broadcastToRoom(room.id, {
         type: 'snakeGameStarted',
-        boardWidth: room.boardWidth,
-        boardHeight: room.boardHeight,
+        worldWidth: worldW,
+        worldHeight: worldH,
+        viewportWidth: room.viewportWidth || 40,
+        viewportHeight: room.viewportHeight || 30,
         players: room.players.map(p => ({
             id: p.id,
             name: p.name,
             color: p.color,
             snake: p.snake,
             score: p.score,
-            alive: p.alive
+            alive: p.alive,
+            isAI: p.isAI
         })),
         food: room.food
     });
     
-    // Reset current tick speed to initial (slow) speed
-    room.currentTickMs = room.initialTickRate;
+    // Reset tick speed
+    room.currentTickMs = room.initialTickRate || 300;
     
-    // Start the game loop with variable speed (starts slow, speeds up)
     if (room.gameLoopTimeout) clearTimeout(room.gameLoopTimeout);
     scheduleNextSnakeTick(room);
     
@@ -1601,24 +1719,32 @@ function spawnFood(room) {
         occupied.add(`${f.x},${f.y}`);
     });
     
-    // Find empty cells
-    const emptyCells = [];
-    for (let x = 0; x < room.boardWidth; x++) {
-        for (let y = 0; y < room.boardHeight; y++) {
-            if (!occupied.has(`${x},${y}`)) {
-                emptyCells.push({ x, y });
-            }
+    // Determine world size
+    const worldW = room.worldWidth || room.boardWidth || 1000;
+    const worldH = room.worldHeight || room.boardHeight || 1000;
+    
+    // Find empty cells (sample random points instead of scanning all 1M cells)
+    // For performance, try random sampling
+    let placed = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const x = Math.floor(Math.random() * worldW);
+        const y = Math.floor(Math.random() * worldH);
+        if (!occupied.has(`${x},${y}`)) {
+            room.food.push({ x, y });
+            placed = true;
+            break;
         }
     }
-    
-    if (emptyCells.length > 0) {
-        const pos = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-        room.food.push(pos);
+    // Fallback: if couldn't find in 100 tries (very full), just place somewhere
+    if (!placed) {
+        const x = Math.floor(Math.random() * worldW);
+        const y = Math.floor(Math.random() * worldH);
+        room.food.push({ x, y });
     }
 }
 
 /**
- * Main Snake game loop - runs every tick
+ * Main Snake game loop - runs every tick (handles per-player timing for speed by length)
  */
 function snakeGameLoop(room) {
     if (room.gameState !== GAME_STATES.PLAYING) {
@@ -1629,15 +1755,34 @@ function snakeGameLoop(room) {
         return;
     }
     
+    const now = Date.now();
+    const worldW = room.worldWidth || room.boardWidth || 1000;
+    const worldH = room.worldHeight || room.boardHeight || 1000;
     let anyAlive = false;
     
-    // Update each player's snake
     room.players.forEach(player => {
         if (!player.alive) return;
         
         anyAlive = true;
         
-        // Apply direction change (prevents 180-degree turns)
+        // Per-player timing for speed based on length
+        const snakeLen = player.snake.length;
+        // Base tick from room, but scale faster for longer snakes
+        // Shorter interval = faster. Length 3 → base speed, length 50 → ~2x faster
+        const speedFactor = Math.max(0.4, 1 - (snakeLen - 3) * 0.02); // 0.4 = 2.5x faster max
+        const cappedFactor = Math.max(0.4, Math.min(1, speedFactor)); // cap
+        const playerTick = Math.floor((room.currentTickMs || 100) * cappedFactor);
+        
+        if (!player.nextMoveTime) player.nextMoveTime = now;
+        if (now < player.nextMoveTime) return; // Not time to move this player yet
+        player.nextMoveTime = now + playerTick;
+        
+        // AI behavior
+        if (player.isAI) {
+            runAISnakeLogic(player, room, worldW, worldH);
+        }
+        
+        // Apply direction change
         const current = player.direction;
         const next = player.nextDirection;
         if (!((current === 'left' && next === 'right') ||
@@ -1647,10 +1792,9 @@ function snakeGameLoop(room) {
             player.direction = next;
         }
         
-        // Calculate new head position
+        // Move head
         const head = player.snake[0];
         let newHead = { x: head.x, y: head.y };
-        
         switch (player.direction) {
             case 'up': newHead.y--; break;
             case 'down': newHead.y++; break;
@@ -1658,36 +1802,35 @@ function snakeGameLoop(room) {
             case 'right': newHead.x++; break;
         }
         
-        // Check wall collision
-        if (newHead.x < 0 || newHead.x >= room.boardWidth ||
-            newHead.y < 0 || newHead.y >= room.boardHeight) {
-            player.alive = false;
+        // Wall collision (world bounds)
+        if (newHead.x < 0 || newHead.x >= worldW || newHead.y < 0 || newHead.y >= worldH) {
+            handleSnakeDeath(room, player);
             return;
         }
         
-        // Check self collision
+        // Self collision
         for (let i = 0; i < player.snake.length; i++) {
             if (player.snake[i].x === newHead.x && player.snake[i].y === newHead.y) {
-                player.alive = false;
+                handleSnakeDeath(room, player);
                 return;
             }
         }
         
-        // Check other player collisions
+        // Other player collision
         for (const other of room.players) {
             if (other.id === player.id || !other.alive) continue;
             for (const seg of other.snake) {
                 if (seg.x === newHead.x && seg.y === newHead.y) {
-                    player.alive = false;
+                    handleSnakeDeath(room, player);
                     return;
                 }
             }
         }
         
-        // Add new head
+        // Move
         player.snake.unshift(newHead);
         
-        // Check food collision
+        // Eat food
         let ate = false;
         for (let i = 0; i < room.food.length; i++) {
             if (room.food[i].x === newHead.x && room.food[i].y === newHead.y) {
@@ -1698,25 +1841,23 @@ function snakeGameLoop(room) {
                 break;
             }
         }
-        
-        // Remove tail if didn't eat
-        if (!ate) {
-            player.snake.pop();
-        }
+        if (!ate) player.snake.pop();
     });
     
-    // Check if game should end (only 0 or 1 players alive)
-    const alivePlayers = room.players.filter(p => p.alive);
-    
-    if (alivePlayers.length <= 1 && room.players.length > 1) {
-        // Game over
+    // Check game over (only for non-AI players: if all humans dead, end? Or keep going)
+    // Per requirement: human death → lobby. Game continues with AI.
+    // So we don't end game when humans die; only if ALL players (including AI) die.
+    const alive = room.players.filter(p => p.alive);
+    if (alive.length === 0) {
         endSnakeGame(room);
         return;
     }
     
-    // Broadcast updated state
+    // Broadcast state (clients handle viewport)
     broadcastToRoom(room.id, {
         type: 'snakeState',
+        worldWidth: worldW,
+        worldHeight: worldH,
         players: room.players.map(p => ({
             id: p.id,
             name: p.name,
@@ -1724,10 +1865,101 @@ function snakeGameLoop(room) {
             snake: p.snake,
             score: p.score,
             alive: p.alive,
-            direction: p.direction
+            direction: p.direction,
+            isAI: p.isAI
         })),
         food: room.food
     });
+}
+
+function handleSnakeDeath(room, player) {
+    player.alive = false;
+    
+    if (player.isAI) {
+        // Respawn AI at low speed after short delay
+        setTimeout(() => {
+            if (room.gameState !== GAME_STATES.PLAYING) return;
+            const spawn = randomSpawnPosition(room.worldWidth || 1000, room.worldHeight || 1000, 5);
+            player.snake = [{ x: spawn.x, y: spawn.y }];
+            player.direction = ['up','down','left','right'][Math.floor(Math.random()*4)];
+            player.nextDirection = player.direction;
+            player.score = 0;
+            player.alive = true;
+            player.nextMoveTime = Date.now() + 500; // Slow start
+            player.aiSpeedMultiplier = 1.5;
+        }, 1000);
+    } else {
+        // Human death: send them to lobby, remove from room
+        if (player.ws) {
+            sendToClient(player.ws, { type: 'snakeYouDied', roomId: room.id });
+        }
+        // Remove from room after a moment
+        setTimeout(() => {
+            room.players = room.players.filter(p => p.id !== player.id);
+            // Free up a slot for new human (maxHumans effectively increases by 1)
+            // Actually: just leave the game running with fewer humans; findOrCreate will add new humans
+            console.log(`Human ${player.name} died and removed from Snake game ${room.id}`);
+        }, 500);
+    }
+}
+
+function runAISnakeLogic(player, room, worldW, worldH) {
+    // Simple AI: occasionally pick a direction toward nearest food or random
+    const head = player.snake[0];
+    
+    // Find nearest food
+    let target = null;
+    let bestDist = Infinity;
+    for (const f of room.food) {
+        const d = Math.abs(f.x - head.x) + Math.abs(f.y - head.y);
+        if (d < bestDist) { bestDist = d; target = f; }
+    }
+    
+    // Pick direction
+    let preferred = null;
+    if (target) {
+        const dx = target.x - head.x;
+        const dy = target.y - head.y;
+        if (Math.abs(dx) > Math.abs(dy)) {
+            preferred = dx > 0 ? 'right' : 'left';
+        } else {
+            preferred = dy > 0 ? 'down' : 'up';
+        }
+    }
+    
+    // Avoid immediate wall/collision
+    const safeDirs = [];
+    const dirs = ['up','down','left','right'];
+    for (const d of dirs) {
+        let nx = head.x, ny = head.y;
+        if (d === 'up') ny--; else if (d === 'down') ny++; else if (d === 'left') nx--; else nx++;
+        if (nx < 0 || nx >= worldW || ny < 0 || ny >= worldH) continue;
+        // Check self
+        let selfHit = false;
+        for (let i = 0; i < player.snake.length; i++) {
+            if (player.snake[i].x === nx && player.snake[i].y === ny) { selfHit = true; break; }
+        }
+        if (selfHit) continue;
+        // Check others
+        let otherHit = false;
+        for (const o of room.players) {
+            if (o.id === player.id || !o.alive) continue;
+            for (const s of o.snake) { if (s.x === nx && s.y === ny) { otherHit = true; break; } }
+            if (otherHit) break;
+        }
+        if (!otherHit) safeDirs.push(d);
+    }
+    
+    if (safeDirs.length === 0) return; // stuck, let it die
+    
+    // Prefer safe + toward food, else random safe
+    let chosen = null;
+    if (preferred && safeDirs.includes(preferred)) {
+        chosen = preferred;
+    } else {
+        chosen = safeDirs[Math.floor(Math.random() * safeDirs.length)];
+    }
+    player.nextDirection = chosen;
 }
 
 /**

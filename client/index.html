@@ -317,6 +317,15 @@
             <input type="text" id="roomCode" placeholder="Enter room code">
         </div>
         <button class="btn btn-secondary" id="joinBtn">Join Room</button>
+        
+        <!-- Snake-only: Start Game (auto find/create) -->
+        <button class="btn btn-primary" id="startSnakeBtn" style="display:none; margin-top:15px; width:100%;">🐍 Start Snake Game</button>
+        
+        <!-- Running game counts -->
+        <div id="gameCounts" style="margin-top:20px; padding:10px; background:#f0f0f0; border-radius:8px; font-size:14px; color:#333;">
+            <strong>Games running:</strong><br>
+            <span id="gameCountsText">Loading...</span>
+        </div>
     </div>
     
     <div id="roomInfo" style="display:none;">

@@ -77,8 +77,19 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('startBtn').addEventListener('click', startGame);
     document.getElementById('playerName').addEventListener('change', updateName);
     
+    // Snake Start Game button
+    const startSnakeBtn = document.getElementById('startSnakeBtn');
+    if (startSnakeBtn) startSnakeBtn.addEventListener('click', startSnakeGame);
+    
+    // Game type change: show/hide Snake button
+    const gameTypeSel = document.getElementById('gameTypeSelect');
+    if (gameTypeSel) gameTypeSel.addEventListener('change', updateLobbyForGameType);
+    
     // Create Phaser game
     game = new Phaser.Game(config);
+    
+    // Initial lobby update
+    updateLobbyForGameType();
 });
 
 function connectWebSocket() {
@@ -205,12 +216,20 @@ function handleServerMessage(data) {
             handleSnakeGameStarted(data);
             break;
             
+        case 'snakeGameJoined':
+            handleSnakeGameJoined(data);
+            break;
+            
         case 'snakeState':
             handleSnakeState(data);
             break;
             
         case 'snakeGameOver':
             handleSnakeGameOver(data);
+            break;
+            
+        case 'snakeYouDied':
+            handleSnakeYouDied(data);
             break;
             
         case 'snakeRestartProgress':
@@ -238,6 +257,38 @@ function createRoom() {
     const selectedType = document.getElementById('gameTypeSelect')?.value || 'hearts';
     gameType = selectedType;
     sendMessage({ type: 'createRoom', gameType: selectedType });
+}
+
+function updateLobbyForGameType() {
+    const sel = document.getElementById('gameTypeSelect');
+    const isSnake = sel && sel.value === 'snake';
+    const createBtn = document.getElementById('createBtn');
+    const joinBtn = document.getElementById('joinBtn');
+    const roomCode = document.getElementById('roomCode');
+    const startSnakeBtn = document.getElementById('startSnakeBtn');
+    
+    if (createBtn) createBtn.style.display = isSnake ? 'none' : 'inline-block';
+    if (joinBtn) joinBtn.style.display = isSnake ? 'none' : 'inline-block';
+    if (roomCode) roomCode.parentElement.style.display = isSnake ? 'none' : 'block';
+    if (startSnakeBtn) startSnakeBtn.style.display = isSnake ? 'block' : 'none';
+    
+    showGameCounts();
+}
+
+function startSnakeGame() {
+    updateName();
+    gameType = 'snake';
+    // Send startGame - server will find or create a Snake game
+    sendMessage({ type: 'startGame' });
+}
+
+function showGameCounts() {
+    const el = document.getElementById('gameCountsText');
+    if (!el) return;
+    // Count running games by type (approximate from known rooms via server state)
+    // For now, just show a placeholder; server could broadcast counts
+    el.textContent = 'Hearts: ? | Big 2: ? | Snake: ?';
+    // TODO: server can broadcast a 'gameCounts' message; client would update this
 }
 
 function joinRoom() {
@@ -964,8 +1015,9 @@ function getPlayerPositions() {
 function handleSnakeGameStarted(data) {
     gameStarted = true;
     gameType = 'snake';
-    snakeBoardWidth = data.boardWidth || 40;
-    snakeBoardHeight = data.boardHeight || 30;
+    // Support both new world-based and old board-based
+    snakeBoardWidth = data.worldWidth || data.boardWidth || 40;
+    snakeBoardHeight = data.worldHeight || data.boardHeight || 30;
     snakePlayers = data.players || [];
     snakeFood = data.food || [];
     
@@ -984,6 +1036,42 @@ function handleSnakeGameStarted(data) {
     setupSnakeControls();
     
     showStatus('Snake game started! Use arrow keys or WASD to move.', 3000);
+}
+
+function handleSnakeGameJoined(data) {
+    // Mid-game join (player added to existing game)
+    gameStarted = true;
+    gameType = 'snake';
+    snakeBoardWidth = data.worldWidth || 1000;
+    snakeBoardHeight = data.worldHeight || 1000;
+    snakePlayers = data.players || [];
+    snakeFood = data.food || [];
+    
+    hideLobby();
+    showGameUI();
+    updatePlayerList();
+    setupSnakeScene();
+    setupSnakeControls();
+    
+    showStatus('Joined Snake game! Use arrow keys or WASD to move.', 3000);
+}
+
+function handleSnakeYouDied(data) {
+    // Human died → return to lobby
+    gameStarted = false;
+    if (snakeKeyListeners) { snakeKeyListeners.forEach(k => k.destroy()); snakeKeyListeners = null; }
+    
+    showStatus('You died! Returning to lobby...', 2000);
+    
+    // Show lobby again after brief delay
+    setTimeout(() => {
+        const restartDiv = document.getElementById('snakeRestartDiv');
+        if (restartDiv) restartDiv.style.display = 'none';
+        document.getElementById('players').style.display = 'none';
+        document.getElementById('roomInfo').style.display = 'none';
+        document.getElementById('lobby').style.display = 'block';
+        showGameCounts();
+    }, 2000);
 }
 
 function handleSnakeState(data) {
@@ -1069,50 +1157,53 @@ function setupSnakeScene() {
     // Clear existing content
     scene.children.removeAll(true);
     
-    // Calculate cell size to fit the screen
+    // Viewport is always 40x30 (cells), world can be 1000x1000
+    const vpW = 40;
+    const vpH = 30;
+    
     const screenWidth = scene.scale.width;
     const screenHeight = scene.scale.height;
-    
-    // Leave some padding
     const padding = 40;
     const availableWidth = screenWidth - padding * 2;
     const availableHeight = screenHeight - padding * 2;
     
     snakeCellSize = Math.min(
-        Math.floor(availableWidth / snakeBoardWidth),
-        Math.floor(availableHeight / snakeBoardHeight)
+        Math.floor(availableWidth / vpW),
+        Math.floor(availableHeight / vpH)
     );
     
-    const boardPixelWidth = snakeBoardWidth * snakeCellSize;
-    const boardPixelHeight = snakeBoardHeight * snakeCellSize;
+    const boardPixelWidth = vpW * snakeCellSize;
+    const boardPixelHeight = vpH * snakeCellSize;
     const offsetX = (screenWidth - boardPixelWidth) / 2;
     const offsetY = (screenHeight - boardPixelHeight) / 2;
     
-    // Draw board background
+    // Dark outer area (non-play)
+    scene.add.graphics().fillStyle(0x1a1a2e, 1).fillRect(0, 0, screenWidth, screenHeight);
+    
+    // Viewport background (green play area)
     const boardBg = scene.add.graphics();
     boardBg.fillStyle(0x0a4d2e, 1);
     boardBg.fillRect(offsetX, offsetY, boardPixelWidth, boardPixelHeight);
     
-    // Draw grid (subtle)
+    // Grid
     boardBg.lineStyle(1, 0x1a5c3a, 0.3);
-    for (let x = 0; x <= snakeBoardWidth; x++) {
+    for (let x = 0; x <= vpW; x++) {
         boardBg.moveTo(offsetX + x * snakeCellSize, offsetY);
         boardBg.lineTo(offsetX + x * snakeCellSize, offsetY + boardPixelHeight);
     }
-    for (let y = 0; y <= snakeBoardHeight; y++) {
+    for (let y = 0; y <= vpH; y++) {
         boardBg.moveTo(offsetX, offsetY + y * snakeCellSize);
         boardBg.lineTo(offsetX + boardPixelWidth, offsetY + y * snakeCellSize);
     }
     boardBg.strokePath();
     
-    // Store offset for rendering
     scene.snakeOffsetX = offsetX;
     scene.snakeOffsetY = offsetY;
+    scene.viewportWidth = vpW;
+    scene.viewportHeight = vpH;
     
-    // Create graphics object for snake rendering
     snakeGraphics = scene.add.graphics();
     
-    // Initial render
     renderSnake();
 }
 
@@ -1123,31 +1214,47 @@ function renderSnake() {
     
     const offsetX = scene.snakeOffsetX || 0;
     const offsetY = scene.snakeOffsetY || 0;
+    const vpW = scene.viewportWidth || 40;
+    const vpH = scene.viewportHeight || 30;
     
-    // Draw food
+    // Find my snake to center viewport
+    let mySnake = snakePlayers.find(p => p.id === clientId && p.alive);
+    if (!mySnake && snakePlayers.length > 0) mySnake = snakePlayers[0]; // fallback
+    
+    let viewX = 0, viewY = 0; // viewport origin in world coords
+    if (mySnake && mySnake.snake && mySnake.snake.length > 0) {
+        const head = mySnake.snake[0];
+        viewX = Math.floor(head.x - vpW / 2);
+        viewY = Math.floor(head.y - vpH / 2);
+    }
+    
+    // Clamp viewport to world bounds
+    const worldW = snakeBoardWidth || 1000;
+    const worldH = snakeBoardHeight || 1000;
+    viewX = Math.max(0, Math.min(worldW - vpW, viewX));
+    viewY = Math.max(0, Math.min(worldH - vpH, viewY));
+    
+    // Draw food within viewport
     snakeFood.forEach(food => {
-        const x = offsetX + food.x * snakeCellSize + snakeCellSize / 2;
-        const y = offsetY + food.y * snakeCellSize + snakeCellSize / 2;
-        
+        if (food.x < viewX || food.x >= viewX + vpW || food.y < viewY || food.y >= viewY + vpH) return;
+        const x = offsetX + (food.x - viewX) * snakeCellSize + snakeCellSize / 2;
+        const y = offsetY + (food.y - viewY) * snakeCellSize + snakeCellSize / 2;
         snakeGraphics.fillStyle(0xffeb3b, 1);
         snakeGraphics.fillCircle(x, y, snakeCellSize / 2 - 2);
     });
     
-    // Draw each player's snake
+    // Draw snakes within viewport
     snakePlayers.forEach(player => {
         if (!player.alive || !player.snake) return;
-        
         const color = parseInt(player.color?.replace('#', '0x') || '0x4CAF50');
-        
         player.snake.forEach((seg, index) => {
-            const x = offsetX + seg.x * snakeCellSize;
-            const y = offsetY + seg.y * snakeCellSize;
+            if (seg.x < viewX || seg.x >= viewX + vpW || seg.y < viewY || seg.y >= viewY + vpH) return;
+            const x = offsetX + (seg.x - viewX) * snakeCellSize;
+            const y = offsetY + (seg.y - viewY) * snakeCellSize;
             
-            // Head is slightly larger/brighter
             if (index === 0) {
                 snakeGraphics.fillStyle(color, 1);
                 snakeGraphics.fillRoundedRect(x + 1, y + 1, snakeCellSize - 2, snakeCellSize - 2, 4);
-                
                 // Eyes
                 snakeGraphics.fillStyle(0xffffff, 1);
                 const eyeSize = snakeCellSize / 6;

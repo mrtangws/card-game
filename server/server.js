@@ -298,8 +298,8 @@ function createSnakeRoom(ws, client, roomId) {
         boardWidth: 40,
         boardHeight: 30,
         targetTickRate: 100,      // ms per tick (final/fastest speed)
-        initialTickRate: 300,     // ms per tick (starting slow speed - 1/3)
-        currentTickMs: 300,       // current tick speed (starts slow, speeds up)
+        initialTickRate: 500,     // ms per tick (starting slow speed - slower initial)
+        currentTickMs: 500,       // current tick speed (starts slow, speeds up)
         food: [],                 // Array of {x, y}
         maxPlayers: 10,
         gameLoopTimeout: null     // using setTimeout for variable speed
@@ -455,8 +455,8 @@ function findOrCreateSnakeGame(client) {
         viewportHeight: 30,
         // Tick/speed config
         targetTickRate: 100,
-        initialTickRate: 300,
-        currentTickMs: 300,
+        initialTickRate: 500,   // slower initial speed
+        currentTickMs: 500,
         food: [],
         maxHumans: 10,
         gameLoopTimeout: null
@@ -482,14 +482,15 @@ function createAISnakePlayer(index) {
         name: `AI ${index + 1}`,
         ws: null,
         isAI: true,
-        snake: [{ x: spawn.x, y: spawn.y }],
+        snake: createInitialSnakeSegments(spawn.x, spawn.y, ['up','down','left','right'][Math.floor(Math.random()*4)]),
         direction: ['up','down','left','right'][Math.floor(Math.random()*4)],
         nextDirection: ['up','down','left','right'][Math.floor(Math.random()*4)],
         score: 0,
         alive: true,
         color: getRandomSnakeColor(),
         aiTarget: null, // For AI pathfinding
-        aiSpeedMultiplier: 1.5 // AI starts slow (high tick = slow)
+        aiSpeedMultiplier: 1.5, // AI starts slow (high tick = slow)
+        lastInputTime: Date.now() // For inactivity kick
     };
 }
 
@@ -500,12 +501,13 @@ function addHumanToSnakeGame(room, client) {
         name: client.name,
         ws: client.ws,
         isAI: false,
-        snake: [{ x: spawn.x, y: spawn.y }],
+        snake: createInitialSnakeSegments(spawn.x, spawn.y, 'right'),
         direction: 'right',
         nextDirection: 'right',
         score: 0,
         alive: true,
-        color: getRandomSnakeColor()
+        color: getRandomSnakeColor(),
+        lastInputTime: Date.now() // For inactivity kick
     });
     client.roomId = room.id;
     
@@ -544,6 +546,24 @@ function randomSpawnPosition(worldW, worldH, margin) {
         x: margin + Math.floor(Math.random() * (worldW - margin * 2)),
         y: margin + Math.floor(Math.random() * (worldH - margin * 2))
     };
+}
+
+/**
+ * Create initial snake with 3 segments (head + 2 body parts)
+ * direction: 'up'|'down'|'left'|'right' - body extends opposite direction
+ */
+function createInitialSnakeSegments(x, y, direction) {
+    const segments = [{ x, y }];
+    // Body goes opposite to facing direction
+    for (let i = 1; i < 3; i++) {
+        switch (direction) {
+            case 'up':    segments.push({ x, y: y + i }); break;
+            case 'down':  segments.push({ x, y: y - i }); break;
+            case 'left':  segments.push({ x: x + i, y }); break;
+            case 'right': segments.push({ x: x - i, y }); break;
+        }
+    }
+    return segments;
 }
 
 function initializeGame(room) {
@@ -1616,17 +1636,19 @@ function initializeSnakeGame(room) {
     room.players.forEach((player) => {
         // Respawn each player at random position (at least 5 from edges)
         const spawn = randomSpawnPosition(worldW, worldH, margin);
-        player.snake = [{ x: spawn.x, y: spawn.y }];
-        player.direction = ['up','down','left','right'][Math.floor(Math.random()*4)];
-        player.nextDirection = player.direction;
+        const dir = ['up','down','left','right'][Math.floor(Math.random()*4)];
+        player.snake = createInitialSnakeSegments(spawn.x, spawn.y, dir);
+        player.direction = dir;
+        player.nextDirection = dir;
         player.score = 0;
         player.alive = true;
         // Reset AI speed if AI
         if (player.isAI) player.aiSpeedMultiplier = 1.5;
+        player.lastInputTime = Date.now(); // Reset inactivity timer
     });
     
-    // Spawn initial food (more for bigger world)
-    const foodCount = Math.floor((worldW * worldH) / 10000); // ~100 for 1000x1000
+    // Spawn initial food (more for bigger world) - 10x more apples
+    const foodCount = Math.floor((worldW * worldH) / 1000); // ~1000 for 1000x1000
     for (let i = 0; i < foodCount; i++) spawnFood(room);
     
     // Broadcast game start with world size
@@ -1649,7 +1671,7 @@ function initializeSnakeGame(room) {
     });
     
     // Reset tick speed
-    room.currentTickMs = room.initialTickRate || 300;
+    room.currentTickMs = room.initialTickRate || 500;
     
     if (room.gameLoopTimeout) clearTimeout(room.gameLoopTimeout);
     scheduleNextSnakeTick(room);
@@ -1723,14 +1745,17 @@ function spawnFood(room) {
     const worldW = room.worldWidth || room.boardWidth || 1000;
     const worldH = room.worldHeight || room.boardHeight || 1000;
     
+    // Various apple colors
+    const appleColors = ['#ffeb3b', '#ff5722', '#e91e63', '#9c27b0', '#2196f3', '#4caf50', '#ff9800', '#00bcd4'];
+    const color = appleColors[Math.floor(Math.random() * appleColors.length)];
+    
     // Find empty cells (sample random points instead of scanning all 1M cells)
-    // For performance, try random sampling
     let placed = false;
     for (let attempt = 0; attempt < 100; attempt++) {
         const x = Math.floor(Math.random() * worldW);
         const y = Math.floor(Math.random() * worldH);
         if (!occupied.has(`${x},${y}`)) {
-            room.food.push({ x, y });
+            room.food.push({ x, y, color });
             placed = true;
             break;
         }
@@ -1739,7 +1764,7 @@ function spawnFood(room) {
     if (!placed) {
         const x = Math.floor(Math.random() * worldW);
         const y = Math.floor(Math.random() * worldH);
-        room.food.push({ x, y });
+        room.food.push({ x, y, color });
     }
 }
 
@@ -1762,6 +1787,22 @@ function snakeGameLoop(room) {
     
     room.players.forEach(player => {
         if (!player.alive) return;
+        
+        // Inactivity kick: if human has no input for 30s, destroy and remove
+        if (!player.isAI) {
+            const inactiveTime = now - (player.lastInputTime || now);
+            if (inactiveTime > 30000) {
+                console.log(`Player ${player.name} kicked for inactivity (30s)`);
+                player.alive = false;
+                if (player.ws) {
+                    sendToClient(player.ws, { type: 'snakeYouDied', roomId: room.id, reason: 'Inactivity' });
+                }
+                setTimeout(() => {
+                    room.players = room.players.filter(p => p.id !== player.id);
+                }, 500);
+                return;
+            }
+        }
         
         anyAlive = true;
         
@@ -1880,13 +1921,15 @@ function handleSnakeDeath(room, player) {
         setTimeout(() => {
             if (room.gameState !== GAME_STATES.PLAYING) return;
             const spawn = randomSpawnPosition(room.worldWidth || 1000, room.worldHeight || 1000, 5);
-            player.snake = [{ x: spawn.x, y: spawn.y }];
-            player.direction = ['up','down','left','right'][Math.floor(Math.random()*4)];
-            player.nextDirection = player.direction;
+            const dir = ['up','down','left','right'][Math.floor(Math.random()*4)];
+            player.snake = createInitialSnakeSegments(spawn.x, spawn.y, dir);
+            player.direction = dir;
+            player.nextDirection = dir;
             player.score = 0;
             player.alive = true;
             player.nextMoveTime = Date.now() + 500; // Slow start
             player.aiSpeedMultiplier = 1.5;
+            player.lastInputTime = Date.now();
         }, 1000);
     } else {
         // Human death: send them to lobby, remove from room
@@ -1989,6 +2032,7 @@ function handleSnakeInput(ws, client, direction) {
     }
     
     player.nextDirection = direction;
+    player.lastInputTime = Date.now(); // Track last input for inactivity kick
 }
 
 /**
@@ -2064,6 +2108,27 @@ function handleSnakeRestart(ws, client) {
         initializeSnakeGame(room);
     }
 }
+
+/**
+ * Broadcast current game counts to all connected clients
+ */
+function broadcastGameCounts() {
+    const counts = { hearts: 0, big2: 0, snake: 0 };
+    for (const room of rooms.values()) {
+        if (room.gameType && counts.hasOwnProperty(room.gameType)) {
+            counts[room.gameType]++;
+        }
+    }
+    // Broadcast to all connected clients
+    for (const [ws, client] of clients.entries()) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'gameCounts', counts }));
+        }
+    }
+}
+
+// Broadcast game counts every 5 seconds
+setInterval(broadcastGameCounts, 5000);
 
 // Start server
 server.listen(PORT, () => {

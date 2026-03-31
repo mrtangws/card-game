@@ -240,6 +240,10 @@ function handleServerMessage(data) {
             // Just update player list; the server continues the game
             break;
             
+        case 'gameCounts':
+            handleGameCounts(data.counts);
+            break;
+            
         case 'error':
             showError(data.message);
             break;
@@ -285,10 +289,14 @@ function startSnakeGame() {
 function showGameCounts() {
     const el = document.getElementById('gameCountsText');
     if (!el) return;
-    // Count running games by type (approximate from known rooms via server state)
-    // For now, just show a placeholder; server could broadcast counts
+    // Initial placeholder until server sends counts
     el.textContent = 'Hearts: ? | Big 2: ? | Snake: ?';
-    // TODO: server can broadcast a 'gameCounts' message; client would update this
+}
+
+function handleGameCounts(counts) {
+    const el = document.getElementById('gameCountsText');
+    if (!el || !counts) return;
+    el.textContent = `Hearts: ${counts.hearts ?? '?'} | Big 2: ${counts.big2 ?? '?'} | Snake: ${counts.snake ?? '?'}`;
 }
 
 function joinRoom() {
@@ -1234,12 +1242,13 @@ function renderSnake() {
     viewX = Math.max(0, Math.min(worldW - vpW, viewX));
     viewY = Math.max(0, Math.min(worldH - vpH, viewY));
     
-    // Draw food within viewport
+    // Draw food within viewport (various colors)
     snakeFood.forEach(food => {
         if (food.x < viewX || food.x >= viewX + vpW || food.y < viewY || food.y >= viewY + vpH) return;
         const x = offsetX + (food.x - viewX) * snakeCellSize + snakeCellSize / 2;
         const y = offsetY + (food.y - viewY) * snakeCellSize + snakeCellSize / 2;
-        snakeGraphics.fillStyle(0xffeb3b, 1);
+        const foodColor = food.color ? parseInt(food.color.replace('#', '0x')) : 0xffeb3b;
+        snakeGraphics.fillStyle(foodColor, 1);
         snakeGraphics.fillCircle(x, y, snakeCellSize / 2 - 2);
     });
     

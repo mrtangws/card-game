@@ -102,8 +102,26 @@ function generateId() {
 // Snake colors for player identification
 const SNAKE_COLORS = ['#4CAF50', '#2196F3', '#FF9800', '#9C27B0', '#F44336', '#00BCD4', '#795548', '#607D8B', '#E91E63', '#8BC34A'];
 
+// Color names (matching SNAKE_COLORS order) + extra colors for AI naming
+const COLOR_NAMES = ['Green', 'Blue', 'Orange', 'Purple', 'Red', 'Cyan', 'Brown', 'Grey', 'Pink', 'Lime'];
+
+// Animal names for AI snake naming
+const ANIMAL_NAMES = ['Fox', 'Snake', 'Wolf', 'Hawk', 'Lion', 'Tiger', 'Bear', 'Eagle', 'Cobra', 'Shark', 'Panther', 'Falcon', 'Leopard', 'Raven', 'Viper'];
+
 function getRandomSnakeColor() {
     return SNAKE_COLORS[Math.floor(Math.random() * SNAKE_COLORS.length)];
+}
+
+function getRandomAIColorName() {
+    return COLOR_NAMES[Math.floor(Math.random() * COLOR_NAMES.length)];
+}
+
+function getRandomAIAnimalName() {
+    return ANIMAL_NAMES[Math.floor(Math.random() * ANIMAL_NAMES.length)];
+}
+
+function generateAIName() {
+    return `${getRandomAIColorName()} ${getRandomAIAnimalName()}`;
 }
 
 function sendToClient(ws, data) {
@@ -488,7 +506,7 @@ function createAISnakePlayer(index) {
     const spawn = randomSpawnPosition(1000, 1000, 5);
     return {
         id: `ai_${generateId()}`,
-        name: `AI ${index + 1}`,
+        name: generateAIName(), // e.g., "Red Fox", "Blue Cobra"
         ws: null,
         isAI: true,
         snake: createInitialSnakeSegments(spawn.x, spawn.y, ['up','down','left','right'][Math.floor(Math.random()*4)]),
@@ -2086,15 +2104,25 @@ function endSnakeGame(room) {
         return best;
     }, null);
     
+    // Compute leaderboard: top 10 by snake length (segments count)
+    const leaderboard = [...room.players]
+        .sort((a, b) => (b.snake?.length || 0) - (a.snake?.length || 0))
+        .slice(0, 10)
+        .map(p => ({ id: p.id, name: p.name, length: p.snake?.length || 0, score: p.score, isAI: p.isAI }));
+    
     broadcastToRoom(room.id, {
         type: 'snakeGameOver',
         winner: winner ? { id: winner.id, name: winner.name, score: winner.score } : null,
         players: room.players.map(p => ({
             id: p.id,
             name: p.name,
+            color: p.color,
             score: p.score,
-            alive: p.alive
-        }))
+            alive: p.alive,
+            length: p.snake?.length || 0,
+            isAI: p.isAI
+        })),
+        leaderboard: leaderboard // Top 10 longest snakes
     });
     
     console.log(`Snake game ended in room ${room.id}. Winner: ${winner?.name || 'none'}`);

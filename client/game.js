@@ -1067,6 +1067,7 @@ function handleSnakeGameJoined(data) {
 function handleSnakeYouDied(data) {
     // Human died → return to lobby
     gameStarted = false;
+    roomId = null; // Clear roomId so they can start a new game
     if (snakeKeyListeners) { snakeKeyListeners.forEach(k => k.destroy()); snakeKeyListeners = null; }
     
     showStatus('You died! Returning to lobby...', 2000);
@@ -1091,6 +1092,7 @@ function handleSnakeState(data) {
 
 function handleSnakeGameOver(data) {
     gameStarted = false;
+    roomId = null; // Clear roomId so they can start a new game after returning to lobby
     
     // Clean up snake controls
     if (snakeKeyListeners) {
@@ -1102,8 +1104,8 @@ function handleSnakeGameOver(data) {
     let message = winner ? `🏆 ${winner.name} wins with ${winner.score} points!` : 'Game Over!';
     showStatus(message, 5000);
     
-    // Show final scores
-    showSnakeFinalScores(data.players);
+    // Show final scores and leaderboard (top 10 longest snakes)
+    showSnakeFinalScores(data.players, data.leaderboard);
     
     // Show restart button for Snake
     showSnakeRestartButton();
@@ -1317,7 +1319,7 @@ function setupSnakeControls() {
     });
 }
 
-function showSnakeFinalScores(playerList) {
+function showSnakeFinalScores(playerList, leaderboard) {
     const scoresDiv = document.getElementById('scores');
     if (!scoresDiv) return;
     
@@ -1337,6 +1339,17 @@ function showSnakeFinalScores(playerList) {
         html += `<tr><td>${i+1} ${medal}</td><td>${p.name}${status}</td><td>${p.score}</td></tr>`;
     });
     html += '</table>';
+    
+    // Add leaderboard: Top 10 longest snakes (by length)
+    if (leaderboard && leaderboard.length > 0) {
+        html += '<h4 style="margin-top:15px;">🏆 Top 10 Longest Snakes</h4><table><tr><th>Rank</th><th>Name</th><th>Length</th></tr>';
+        leaderboard.forEach((p, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
+            const aiTag = p.isAI ? ' 🤖' : '';
+            html += `<tr><td>${i+1} ${medal}</td><td>${p.name}${aiTag}</td><td>${p.length}</td></tr>`;
+        });
+        html += '</table>';
+    }
     
     scoresDiv.innerHTML = html;
     

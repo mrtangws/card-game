@@ -1113,13 +1113,32 @@ function handleSnakeLeaderboard(leaderboard) {
         return;
     }
     
+    // Find current player's rank (if any)
+    const myRank = leaderboard.findIndex(p => p.id === clientId);
+    const myEntry = myRank >= 0 ? leaderboard[myRank] : null;
+    
     let html = '<h4 style="margin:0 0 8px 0; color:#4CAF50;">🏆 Leaderboard</h4>';
     html += '<table style="width:100%; border-collapse:collapse; font-size:12px;">';
-    leaderboard.forEach((p, i) => {
+    
+    // Show top 10 (or all if <= 10)
+    const topN = Math.min(10, leaderboard.length);
+    for (let i = 0; i < topN; i++) {
+        const p = leaderboard[i];
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
         const aiTag = p.isAI ? '🤖' : '';
-        html += `<tr><td style="width:30px;">${medal}</td><td style="max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.name}</td><td style="text-align:right;">${aiTag}</td><td style="text-align:right; font-weight:bold;">${p.length}</td></tr>`;
-    });
+        const nameColor = p.color || '#fff';
+        const isMe = p.id === clientId;
+        const meTag = isMe ? ' (You)' : '';
+        html += `<tr><td style="width:30px;">${medal}</td><td style="max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:${nameColor}; font-weight:${isMe?'bold':'normal'};">${p.name}${meTag}</td><td style="text-align:right;">${aiTag}</td><td style="text-align:right; font-weight:bold;">${p.length}</td></tr>`;
+    }
+    
+    // If current player is not in top 10, show them after
+    if (myEntry && myRank >= 10) {
+        const nameColor = myEntry.color || '#fff';
+        html += `<tr><td colspan="4" style="padding-top:6px; border-top:1px solid rgba(255,255,255,0.2);"></td></tr>`;
+        html += `<tr><td style="width:30px;">${myRank+1}.</td><td style="max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:${nameColor}; font-weight:bold;">${myEntry.name} (You)</td><td style="text-align:right;">${myEntry.isAI?'🤖':''}</td><td style="text-align:right; font-weight:bold;">${myEntry.length}</td></tr>`;
+    }
+    
     html += '</table>';
     panel.innerHTML = html;
 }
@@ -1374,7 +1393,8 @@ function showSnakeFinalScores(playerList, leaderboard) {
     sorted.forEach((p, i) => {
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
         const status = p.alive ? '' : ' (Dead)';
-        html += `<tr><td>${i+1} ${medal}</td><td>${p.name}${status}</td><td>${p.score}</td></tr>`;
+        const nameColor = p.color || '#333';
+        html += `<tr><td>${i+1} ${medal}</td><td style="color:${nameColor}; font-weight:bold;">${p.name}${status}</td><td>${p.score}</td></tr>`;
     });
     html += '</table>';
     
@@ -1384,7 +1404,8 @@ function showSnakeFinalScores(playerList, leaderboard) {
         leaderboard.forEach((p, i) => {
             const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
             const aiTag = p.isAI ? ' 🤖' : '';
-            html += `<tr><td>${i+1} ${medal}</td><td>${p.name}${aiTag}</td><td>${p.length}</td></tr>`;
+            const nameColor = p.color || '#333';
+            html += `<tr><td>${i+1} ${medal}</td><td style="color:${nameColor}; font-weight:bold;">${p.name}${aiTag}</td><td>${p.length}</td></tr>`;
         });
         html += '</table>';
     }

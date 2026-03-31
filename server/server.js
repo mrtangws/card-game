@@ -1718,7 +1718,7 @@ function initializeSnakeGame(room) {
         for (let i = 0; i < 5; i++) spawnFood(room);
     }, 2000);
     
-    // Live leaderboard: broadcast top 10 every second
+    // Live leaderboard: broadcast all alive players sorted by length every second
     if (room.leaderboardInterval) clearInterval(room.leaderboardInterval);
     room.leaderboardInterval = setInterval(() => {
         if (room.gameState !== GAME_STATES.PLAYING) {
@@ -1726,12 +1726,11 @@ function initializeSnakeGame(room) {
             room.leaderboardInterval = null;
             return;
         }
-        // Compute top 10 by snake length
+        // Compute leaderboard: all alive players sorted by snake length (descending)
         const leaderboard = [...room.players]
             .filter(p => p.alive)
             .sort((a, b) => (b.snake?.length || 0) - (a.snake?.length || 0))
-            .slice(0, 10)
-            .map(p => ({ id: p.id, name: p.name, length: p.snake?.length || 0, score: p.score, isAI: p.isAI }));
+            .map(p => ({ id: p.id, name: p.name, color: p.color, length: p.snake?.length || 0, score: p.score, isAI: p.isAI }));
         
         broadcastToRoom(room.id, {
             type: 'snakeLeaderboard',
@@ -2122,7 +2121,7 @@ function endSnakeGame(room) {
     const leaderboard = [...room.players]
         .sort((a, b) => (b.snake?.length || 0) - (a.snake?.length || 0))
         .slice(0, 10)
-        .map(p => ({ id: p.id, name: p.name, length: p.snake?.length || 0, score: p.score, isAI: p.isAI }));
+        .map(p => ({ id: p.id, name: p.name, color: p.color, length: p.snake?.length || 0, score: p.score, isAI: p.isAI }));
     
     broadcastToRoom(room.id, {
         type: 'snakeGameOver',

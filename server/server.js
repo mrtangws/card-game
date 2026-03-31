@@ -41,9 +41,8 @@ const SNAKE_AI_COLORS = [
     0x66ff66, 0x6666ff, 0xff6666, 0xffff66, 0xff66ff,
     0x66ffff, 0xffaa66, 0xaa66ff, 0xaaff66, 0xff66aa
 ];
-const SNAKE_MIN_SPEED = 3; // ticks per move (slower)
-const SNAKE_MAX_SPEED = 1; // ticks per move (faster)
-const SNAKE_SPEED_GROWTH_FACTOR = 0.02; // speed increase per segment
+const SNAKE_BASE_SPEED = 3; // Base ticks per move
+const SNAKE_MAX_SPEED_MULTIPLIER = 4; // Maximum speed multiplier (capped at 4x base)
 const SNAKE_FOOD_COLORS = [
     0xff0000, // Red
     0xff8800, // Orange
@@ -1588,7 +1587,7 @@ function joinSnakeGame(ws, client, room) {
         growth: 0, // Already at length 3
         isAI: false,
         moveCounter: 0,
-        speed: SNAKE_MIN_SPEED
+        speed: SNAKE_BASE_SPEED
     };
     
     // Notify all players
@@ -1661,7 +1660,7 @@ function initializeSnakeGameWithAI(room) {
         growth: 0, // Already at length 3
         isAI: false,
         moveCounter: 0,
-        speed: SNAKE_MIN_SPEED
+        speed: SNAKE_BASE_SPEED
     };
     
     // Spawn AI snakes
@@ -1743,7 +1742,7 @@ function spawnAISnake(room) {
         growth: 0, // Already at length 3
         isAI: true,
         moveCounter: 0,
-        speed: SNAKE_MIN_SPEED + 1 // AI starts slightly slower
+        speed: SNAKE_BASE_SPEED + 0.5 // AI starts slightly slower
     };
 }
 
@@ -1767,13 +1766,14 @@ function getRandomDirection() {
 
 /**
  * Calculate snake speed based on length
+ * Formula: BASE_SPEED * (1 + length / 10), capped at 4 * BASE_SPEED
  */
 function calculateSnakeSpeed(snake) {
     const length = snake.body.length;
-    // Speed increases as snake grows, but capped
-    const speedDecrease = Math.floor(length * SNAKE_SPEED_GROWTH_FACTOR);
-    const speed = Math.max(SNAKE_MAX_SPEED, SNAKE_MIN_SPEED - speedDecrease);
-    return speed;
+    const speedMultiplier = 1 + length / 10;
+    const calculatedSpeed = SNAKE_BASE_SPEED * speedMultiplier;
+    const maxSpeed = SNAKE_BASE_SPEED * SNAKE_MAX_SPEED_MULTIPLIER;
+    return Math.min(calculatedSpeed, maxSpeed);
 }
 
 /**

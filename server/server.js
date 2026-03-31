@@ -212,6 +212,9 @@ function handleDisconnect(ws) {
                 if (room.foodSpawner) {
                     clearInterval(room.foodSpawner);
                 }
+                if (room.leaderboardInterval) {
+                    clearInterval(room.leaderboardInterval);
+                }
                 rooms.delete(client.roomId);
             } else {
                 broadcastToRoom(client.roomId, {
@@ -319,8 +322,8 @@ function createSnakeRoom(ws, client, roomId) {
         boardWidth: 40,
         boardHeight: 30,
         targetTickRate: 100,      // ms per tick (final/fastest speed)
-        initialTickRate: 1000,    // ms per tick (starting slow - 50% slower than before)
-        currentTickMs: 1000,      // current tick speed (starts slow, speeds up)
+        initialTickRate: 500,     // ms per tick (base speed - 100% faster than before)
+        currentTickMs: 500,       // current tick speed (starts at base)
         food: [],                 // Array of {x, y}
         maxPlayers: 10,
         gameLoopTimeout: null     // using setTimeout for variable speed
@@ -482,8 +485,8 @@ function findOrCreateSnakeGame(client) {
         viewportHeight: 30,
         // Tick/speed config
         targetTickRate: 100,
-        initialTickRate: 1000,  // 50% slower base speed
-        currentTickMs: 1000,
+        initialTickRate: 500,   // base speed (100% faster)
+        currentTickMs: 500,     // starts at base
         food: [],
         maxHumans: 10,
         gameLoopTimeout: null
@@ -1715,6 +1718,27 @@ function initializeSnakeGame(room) {
         for (let i = 0; i < 5; i++) spawnFood(room);
     }, 2000);
     
+    // Live leaderboard: broadcast top 10 every second
+    if (room.leaderboardInterval) clearInterval(room.leaderboardInterval);
+    room.leaderboardInterval = setInterval(() => {
+        if (room.gameState !== GAME_STATES.PLAYING) {
+            clearInterval(room.leaderboardInterval);
+            room.leaderboardInterval = null;
+            return;
+        }
+        // Compute top 10 by snake length
+        const leaderboard = [...room.players]
+            .filter(p => p.alive)
+            .sort((a, b) => (b.snake?.length || 0) - (a.snake?.length || 0))
+            .slice(0, 10)
+            .map(p => ({ id: p.id, name: p.name, length: p.snake?.length || 0, score: p.score, isAI: p.isAI }));
+        
+        broadcastToRoom(room.id, {
+            type: 'snakeLeaderboard',
+            leaderboard: leaderboard
+        });
+    }, 1000);
+    
     console.log(`Snake game started in room ${room.id} with ${room.players.length} players`);
 }
 
@@ -1847,11 +1871,10 @@ function snakeGameLoop(room) {
         
         // Per-player timing for speed based on length
         const snakeLen = player.snake.length;
-        // Base tick from room, but scale faster for longer snakes
-        // Shorter interval = faster. Length 3 → base speed, length 50 → ~2x faster
-        const speedFactor = Math.max(0.4, 1 - (snakeLen - 3) * 0.02); // 0.4 = 2.5x faster max
-        const cappedFactor = Math.max(0.4, Math.min(1, speedFactor)); // cap
-        const playerTick = Math.floor((room.currentTickMs || 100) * cappedFactor);
+        // Speed formula: BASE_SPEED * (1 + length / 10), capped at 4 * BASE_SPEED
+        // Larger interval = slower. Short snakes are fast, long snakes are slow.
+        const baseSpeed = room.currentTickMs || 500;
+        const playerTick = Math.floor(Math.min(4 * baseSpeed, baseSpeed * (1 + snakeLen / 10)));
         
         if (!player.nextMoveTime) player.nextMoveTime = now;
         if (now < player.nextMoveTime) return; // Not time to move this player yet
@@ -1966,7 +1989,7 @@ function handleSnakeDeath(room, player) {
             player.nextDirection = dir;
             player.score = 0;
             player.alive = true;
-            player.nextMoveTime = Date.now() + 500; // Slow start
+            player.nextMoveTime = Date.now() + 1000; // Slow start after respawn (2x base speed)
             player.aiSpeedMultiplier = 1.5;
             player.lastInputTime = Date.now();
         }, 1000);
@@ -2089,6 +2112,11 @@ function endSnakeGame(room) {
     if (room.foodSpawner) {
         clearInterval(room.foodSpawner);
         room.foodSpawner = null;
+    }
+    
+    if (room.leaderboardInterval) {
+        clearInterval(room.leaderboardInterval);
+        room.leaderboardInterval = null;
     }
     
     // Reset restart votes for all players

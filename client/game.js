@@ -228,6 +228,10 @@ function handleServerMessage(data) {
             handleSnakeGameOver(data);
             break;
             
+        case 'snakeLeaderboard':
+            handleSnakeLeaderboard(data.leaderboard);
+            break;
+            
         case 'snakeYouDied':
             handleSnakeYouDied(data);
             break;
@@ -1070,6 +1074,10 @@ function handleSnakeYouDied(data) {
     roomId = null; // Clear roomId so they can start a new game
     if (snakeKeyListeners) { snakeKeyListeners.forEach(k => k.destroy()); snakeKeyListeners = null; }
     
+    // Remove live leaderboard panel
+    const liveLb = document.getElementById('snakeLeaderboardPanel');
+    if (liveLb) liveLb.remove();
+    
     showStatus('You died! Returning to lobby...', 2000);
     
     // Show lobby again after brief delay
@@ -1090,6 +1098,32 @@ function handleSnakeState(data) {
     renderSnake();
 }
 
+function handleSnakeLeaderboard(leaderboard) {
+    // Show/update a live leaderboard panel
+    let panel = document.getElementById('snakeLeaderboardPanel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'snakeLeaderboardPanel';
+        panel.style.cssText = 'position:fixed; top:80px; left:20px; width:220px; max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.7); color:#fff; padding:12px; border-radius:10px; font-size:13px; z-index:50;';
+        document.body.appendChild(panel);
+    }
+    
+    if (!leaderboard || leaderboard.length === 0) {
+        panel.innerHTML = '<h4 style="margin:0 0 8px 0; color:#4CAF50;">🏆 Leaderboard</h4><div style="opacity:0.7;">No snakes yet</div>';
+        return;
+    }
+    
+    let html = '<h4 style="margin:0 0 8px 0; color:#4CAF50;">🏆 Leaderboard</h4>';
+    html += '<table style="width:100%; border-collapse:collapse; font-size:12px;">';
+    leaderboard.forEach((p, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+        const aiTag = p.isAI ? '🤖' : '';
+        html += `<tr><td style="width:30px;">${medal}</td><td style="max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.name}</td><td style="text-align:right;">${aiTag}</td><td style="text-align:right; font-weight:bold;">${p.length}</td></tr>`;
+    });
+    html += '</table>';
+    panel.innerHTML = html;
+}
+
 function handleSnakeGameOver(data) {
     gameStarted = false;
     roomId = null; // Clear roomId so they can start a new game after returning to lobby
@@ -1099,6 +1133,10 @@ function handleSnakeGameOver(data) {
         snakeKeyListeners.forEach(k => k.destroy());
         snakeKeyListeners = null;
     }
+    
+    // Remove live leaderboard panel
+    const liveLb = document.getElementById('snakeLeaderboardPanel');
+    if (liveLb) liveLb.remove();
     
     const winner = data.winner;
     let message = winner ? `🏆 ${winner.name} wins with ${winner.score} points!` : 'Game Over!';

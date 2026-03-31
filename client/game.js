@@ -31,6 +31,7 @@ let snakeViewportHeight = 30;
 let snakeCellSize = 20;
 let snakeGraphics = null;
 let snakeScoreTexts = [];
+let snakeLeaderboardTexts = [];
 let maxPlayers = 4;
 let gameCounts = { hearts: 0, big2: 0, snake: 0 };
 
@@ -240,6 +241,10 @@ function handleServerMessage(data) {
             
         case 'snakePlayerDied':
             handleSnakePlayerDied(data);
+            break;
+            
+        case 'snakeLeaderboard':
+            handleSnakeLeaderboard(data);
             break;
             
         case 'error':
@@ -1064,9 +1069,11 @@ function initSnakeGame() {
     }
     snakeGraphics = scene.add.graphics();
     
-    // Clear score texts
+    // Clear score texts and leaderboard
     snakeScoreTexts.forEach(t => t.destroy());
     snakeScoreTexts = [];
+    snakeLeaderboardTexts.forEach(t => t.destroy());
+    snakeLeaderboardTexts = [];
     
     // Calculate cell size to fit screen - viewport is fixed at 40x30
     const margin = 50;
@@ -1149,11 +1156,58 @@ function handleSnakePlayerDied(data) {
     }
     snakeScoreTexts.forEach(t => t.destroy());
     snakeScoreTexts = [];
+    snakeLeaderboardTexts.forEach(t => t.destroy());
+    snakeLeaderboardTexts = [];
     
     // Return to lobby after delay
     setTimeout(() => {
         returnToLobby();
     }, 3000);
+}
+
+function handleSnakeLeaderboard(data) {
+    if (!scene || !snakeGame) return;
+    
+    // Clear old leaderboard texts
+    snakeLeaderboardTexts.forEach(t => t.destroy());
+    snakeLeaderboardTexts = [];
+    
+    const topSnakes = data.topSnakes || [];
+    if (topSnakes.length === 0) return;
+    
+    // Position leaderboard on the right side of the viewport
+    const gridPixelWidth = snakeViewportWidth * snakeCellSize;
+    const gridPixelHeight = snakeViewportHeight * snakeCellSize;
+    const startX = (scene.scale.width - gridPixelWidth) / 2;
+    const startY = (scene.scale.height - gridPixelHeight) / 2;
+    
+    const leaderboardX = startX + gridPixelWidth + 20;
+    let leaderboardY = startY;
+    
+    // Title
+    const title = scene.add.text(leaderboardX, leaderboardY, '🏆 TOP 10 SNAKES', {
+        fontSize: '16px',
+        color: '#ffffff',
+        fontStyle: 'bold'
+    });
+    snakeLeaderboardTexts.push(title);
+    leaderboardY += 25;
+    
+    // List top 10
+    topSnakes.forEach((snake, index) => {
+        const colorHex = '#' + (snake.color || 0x00ff00).toString(16).padStart(6, '0');
+        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '•';
+        const aiLabel = snake.isAI ? '[AI] ' : '';
+        
+        const text = scene.add.text(leaderboardX, leaderboardY, 
+            `${medal} ${aiLabel}${snake.name}: ${snake.length}`, {
+            fontSize: '13px',
+            color: colorHex
+        });
+        
+        snakeLeaderboardTexts.push(text);
+        leaderboardY += 18;
+    });
 }
 
 function returnToLobby() {
@@ -1229,9 +1283,10 @@ function renderSnakeGame() {
     const viewportX = snakeGame.viewportX || 0;
     const viewportY = snakeGame.viewportY || 0;
     
-    // Draw food
-    snakeGraphics.fillStyle(0xff0000, 1);
+    // Draw food with various colors
     snakeGame.food.forEach(food => {
+        const color = food.color || 0xff0000;
+        snakeGraphics.fillStyle(color, 1);
         const fx = startX + food.x * snakeCellSize + snakeCellSize / 2;
         const fy = startY + food.y * snakeCellSize + snakeCellSize / 2;
         const radius = snakeCellSize * 0.3;

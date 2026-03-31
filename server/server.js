@@ -44,6 +44,20 @@ const SNAKE_AI_COLORS = [
 const SNAKE_MIN_SPEED = 3; // ticks per move (slower)
 const SNAKE_MAX_SPEED = 1; // ticks per move (faster)
 const SNAKE_SPEED_GROWTH_FACTOR = 0.02; // speed increase per segment
+const SNAKE_FOOD_COLORS = [
+    0xff0000, // Red
+    0xff8800, // Orange
+    0xffff00, // Yellow
+    0x88ff00, // Lime
+    0x00ff00, // Green
+    0x00ff88, // Teal
+    0x00ffff, // Cyan
+    0x0088ff, // Light Blue
+    0x0000ff, // Blue
+    0x8800ff, // Purple
+    0xff00ff, // Magenta
+    0xff0088  // Pink
+];
 
 // Big 2 specific constants
 // Big 2 card ranking: 3 is smallest, 2 is biggest
@@ -1655,8 +1669,8 @@ function initializeSnakeGameWithAI(room) {
         spawnAISnake(room);
     }
     
-    // Spawn initial food (reduced for 200x200 world)
-    for (let i = 0; i < 20; i++) {
+    // Spawn initial food (200 apples for 200x200 world - 10x increase)
+    for (let i = 0; i < 200; i++) {
         spawnFood(room);
     }
     
@@ -1792,7 +1806,8 @@ function spawnFood(room) {
         const key = `${x},${y}`;
         
         if (!occupied.has(key)) {
-            game.food.push({ x, y, id: generateId().slice(0, 4) });
+            const color = SNAKE_FOOD_COLORS[Math.floor(Math.random() * SNAKE_FOOD_COLORS.length)];
+            game.food.push({ x, y, id: generateId().slice(0, 4), color });
             return;
         }
         attempts++;
@@ -2011,6 +2026,16 @@ function snakeGameTick(room) {
         spawnAISnake(room);
     }
     
+    // Periodic apple spawning - spawn 1 apple every 5 ticks (twice per second at 100ms tick rate)
+    if (game.tick % 5 === 0 && game.food.length < 400) {
+        spawnFood(room);
+    }
+    
+    // Broadcast leaderboard every second (every 10 ticks at 100ms)
+    if (game.tick % 10 === 0) {
+        broadcastLeaderboard(room);
+    }
+    
     // Broadcast state to each player with their viewport
     broadcastSnakeStatePerPlayer(room);
 }
@@ -2023,10 +2048,11 @@ function killSnake(room, snake) {
     
     const game = room.snakeGame;
     
-    // Turn snake body into food (reduced for 200x200 world)
+    // Turn snake body into food (higher cap for 200x200 world with more apples)
     snake.body.forEach((seg, i) => {
-        if (i % 3 === 0 && game.food.length < 40) {
-            game.food.push({ x: seg.x, y: seg.y, id: generateId().slice(0, 4) });
+        if (i % 3 === 0 && game.food.length < 400) {
+            const color = SNAKE_FOOD_COLORS[Math.floor(Math.random() * SNAKE_FOOD_COLORS.length)];
+            game.food.push({ x: seg.x, y: seg.y, id: generateId().slice(0, 4), color });
         }
     });
     
@@ -2049,9 +2075,18 @@ function killSnake(room, snake) {
                 score: snake.score,
                 length: snake.body.length
             });
-            
-            // Remove from room
-            player.ws = null; // Mark as disconnected from game
+        }
+        
+        // Remove player from room's players array
+        room.players = room.players.filter(p => p.id !== snake.id);
+        
+        // Remove the dead snake from game
+        delete game.snakes[snake.id];
+        
+        // Clear client's room association
+        const client = Array.from(clients.values()).find(c => c.id === snake.id);
+        if (client) {
+            client.roomId = null;
         }
         
         broadcastToRoom(room.id, {
@@ -2178,6 +2213,34 @@ function handleSnakeDirection(ws, client, direction) {
     if (opposites[direction] !== snake.direction) {
         snake.nextDirection = direction;
     }
+}
+
+/**
+ * Broadcast leaderboard to all players
+ */
+function broadcastLeaderboard(room) {
+    const game = room.snakeGame;
+    
+    // Get top 10 snakes by length (human and AI combined)
+    const allSnakes = Object.values(game.snakes)
+        .filter(s => s.alive)
+        .sort((a, b) => b.body.length - a.body.length)
+        .slice(0, 10)
+        .map((s, index) => ({
+            rank: index + 1,
+            name: s.name,
+            length: s.body.length,
+            score: s.score,
+            isAI: s.isAI,
+            color: s.color
+        }));
+    
+    const leaderboard = {
+        type: 'snakeLeaderboard',
+        topSnakes: allSnakes
+    };
+    
+    broadcastToRoom(room.id, leaderboard);
 }
 
 /**

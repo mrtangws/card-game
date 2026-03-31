@@ -37,7 +37,7 @@ const config = {
     parent: 'gameContainer',
     width: window.innerWidth,
     height: window.innerHeight,
-    backgroundColor: '#0a4d2e',
+    backgroundColor: '#1a1a2e',  // Dark navy - distinct from green play area
     scene: {
         preload: preload,
         create: create,
@@ -212,6 +212,10 @@ function handleServerMessage(data) {
             handleSnakeGameOver(data);
             break;
             
+        case 'snakeRestartProgress':
+            handleSnakeRestartProgress(data);
+            break;
+            
         case 'snakePlayerLeft':
             // Just update player list; the server continues the game
             break;
@@ -262,7 +266,10 @@ function showRoomInfo() {
     
     // Show correct max player count based on game type
     const maxPlayers = gameType === 'snake' ? 10 : 4;
-    document.getElementById('playerCount').textContent = `${players.length}/${maxPlayers}`;
+    const playerCountText = document.getElementById('playerCountText');
+    if (playerCountText) {
+        playerCountText.textContent = `${players.length}/${maxPlayers} players`;
+    }
     
     // Show start button only for host (first player)
     if (players.length > 0 && players[0].id === clientId) {
@@ -343,10 +350,10 @@ function updatePlayerList() {
     });
     
     // Update room info player count
-    const pc = document.getElementById('playerCount');
-    if (pc) {
+    const pcText = document.getElementById('playerCountText');
+    if (pcText) {
         const maxPlayers = gameType === 'snake' ? 10 : 4;
-        pc.textContent = `${players.length}/${maxPlayers}`;
+        pcText.textContent = `${players.length}/${maxPlayers} players`;
     }
 }
 
@@ -961,6 +968,10 @@ function handleSnakeGameStarted(data) {
     snakePlayers = data.players || [];
     snakeFood = data.food || [];
     
+    // Hide restart button if visible
+    const restartDiv = document.getElementById('snakeRestartDiv');
+    if (restartDiv) restartDiv.style.display = 'none';
+    
     hideLobby();
     showGameUI();
     updatePlayerList();
@@ -996,6 +1007,54 @@ function handleSnakeGameOver(data) {
     
     // Show final scores
     showSnakeFinalScores(data.players);
+    
+    // Show restart button for Snake
+    showSnakeRestartButton();
+}
+
+function showSnakeRestartButton() {
+    let restartDiv = document.getElementById('snakeRestartDiv');
+    if (!restartDiv) {
+        restartDiv = document.createElement('div');
+        restartDiv.id = 'snakeRestartDiv';
+        restartDiv.style.cssText = 'position:fixed; bottom:220px; left:50%; transform:translateX(-50%); z-index:60; text-align:center;';
+        
+        const btn = document.createElement('button');
+        btn.id = 'snakeRestartBtn';
+        btn.textContent = 'Restart Game';
+        btn.className = 'btn btn-primary';
+        btn.style.fontSize = '20px';
+        btn.onclick = clickSnakeRestart;
+        
+        const status = document.createElement('div');
+        status.id = 'snakeRestartStatus';
+        status.style.cssText = 'margin-top:10px; color:#fff; font-size:14px;';
+        
+        restartDiv.appendChild(btn);
+        restartDiv.appendChild(status);
+        document.body.appendChild(restartDiv);
+    }
+    restartDiv.style.display = 'block';
+    
+    // Reset status
+    const statusEl = document.getElementById('snakeRestartStatus');
+    if (statusEl) statusEl.textContent = '';
+}
+
+function clickSnakeRestart() {
+    sendMessage({ type: 'snakeRestart' });
+    const btn = document.getElementById('snakeRestartBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Waiting for others...';
+    }
+}
+
+function handleSnakeRestartProgress(data) {
+    const statusEl = document.getElementById('snakeRestartStatus');
+    if (statusEl) {
+        statusEl.textContent = `${data.readyCount}/${data.totalHumans} players ready to restart`;
+    }
 }
 
 function setupSnakeScene() {

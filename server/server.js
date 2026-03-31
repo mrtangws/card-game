@@ -167,6 +167,10 @@ function handleMessage(ws, data) {
             handleSnakeInput(ws, client, data.direction);
             break;
             
+        case 'snakeRestart':
+            handleSnakeRestart(ws, client);
+            break;
+            
         default:
             console.log('Unknown message type:', data.type);
     }
@@ -184,8 +188,8 @@ function handleDisconnect(ws) {
             
             if (room.players.length === 0) {
                 // Stop any game loop (Snake)
-                if (room.gameLoopInterval) {
-                    clearInterval(room.gameLoopInterval);
+                if (room.gameLoopTimeout) {
+                    clearTimeout(room.gameLoopTimeout);
                 }
                 rooms.delete(client.roomId);
             } else {
@@ -293,10 +297,12 @@ function createSnakeRoom(ws, client, roomId) {
         // Snake game config
         boardWidth: 40,
         boardHeight: 30,
-        tickRate: 100,      // ms per tick
-        food: [],           // Array of {x, y}
+        targetTickRate: 100,      // ms per tick (final/fastest speed)
+        initialTickRate: 300,     // ms per tick (starting slow speed - 1/3)
+        currentTickMs: 300,       // current tick speed (starts slow, speeds up)
+        food: [],                 // Array of {x, y}
         maxPlayers: 10,
-        gameLoopInterval: null
+        gameLoopTimeout: null     // using setTimeout for variable speed
     };
     
     rooms.set(roomId, room);
@@ -1522,13 +1528,40 @@ function initializeSnakeGame(room) {
         food: room.food
     });
     
-    // Start the game loop
-    if (room.gameLoopInterval) clearInterval(room.gameLoopInterval);
-    room.gameLoopInterval = setInterval(() => {
-        snakeGameLoop(room);
-    }, room.tickRate);
+    // Reset current tick speed to initial (slow) speed
+    room.currentTickMs = room.initialTickRate;
+    
+    // Start the game loop with variable speed (starts slow, speeds up)
+    if (room.gameLoopTimeout) clearTimeout(room.gameLoopTimeout);
+    scheduleNextSnakeTick(room);
     
     console.log(`Snake game started in room ${room.id} with ${room.players.length} players`);
+}
+
+/**
+ * Schedule the next snake game tick with current (possibly slowing) delay.
+ * Speed increases gradually from initialTickRate to targetTickRate.
+ */
+function scheduleNextSnakeTick(room) {
+    if (room.gameState !== GAME_STATES.PLAYING) {
+        if (room.gameLoopTimeout) {
+            clearTimeout(room.gameLoopTimeout);
+            room.gameLoopTimeout = null;
+        }
+        return;
+    }
+    
+    room.gameLoopTimeout = setTimeout(() => {
+        snakeGameLoop(room);
+        
+        // Speed up: decrease tick time by 2ms each tick until we hit target
+        if (room.currentTickMs > room.targetTickRate) {
+            room.currentTickMs = Math.max(room.targetTickRate, room.currentTickMs - 2);
+        }
+        
+        // Schedule next tick
+        scheduleNextSnakeTick(room);
+    }, room.currentTickMs);
 }
 
 /**
@@ -1588,9 +1621,9 @@ function spawnFood(room) {
  */
 function snakeGameLoop(room) {
     if (room.gameState !== GAME_STATES.PLAYING) {
-        if (room.gameLoopInterval) {
-            clearInterval(room.gameLoopInterval);
-            room.gameLoopInterval = null;
+        if (room.gameLoopTimeout) {
+            clearTimeout(room.gameLoopTimeout);
+            room.gameLoopTimeout = null;
         }
         return;
     }
@@ -1731,10 +1764,15 @@ function handleSnakeInput(ws, client, direction) {
 function endSnakeGame(room) {
     room.gameState = GAME_STATES.GAME_END;
     
-    if (room.gameLoopInterval) {
-        clearInterval(room.gameLoopInterval);
-        room.gameLoopInterval = null;
+    if (room.gameLoopTimeout) {
+        clearTimeout(room.gameLoopTimeout);
+        room.gameLoopTimeout = null;
     }
+    
+    // Reset restart votes for all players
+    room.players.forEach(p => {
+        p.readyForRestart = false;
+    });
     
     // Determine winner (highest score, or last alive)
     const winner = room.players.reduce((best, p) => {
@@ -1756,6 +1794,42 @@ function endSnakeGame(room) {
     });
     
     console.log(`Snake game ended in room ${room.id}. Winner: ${winner?.name || 'none'}`);
+}
+
+/**
+ * Handle snake restart vote from a player
+ */
+function handleSnakeRestart(ws, client) {
+    const room = rooms.get(client.roomId);
+    
+    if (!room || room.gameType !== 'snake' || room.gameState !== GAME_STATES.GAME_END) {
+        return;
+    }
+    
+    const player = room.players.find(p => p.id === client.id);
+    if (!player) return;
+    
+    player.readyForRestart = true;
+    
+    // Count how many human players are ready
+    const humanPlayers = room.players.filter(p => !p.isAI);
+    const readyCount = humanPlayers.filter(p => p.readyForRestart).length;
+    
+    // Broadcast progress
+    broadcastToRoom(room.id, {
+        type: 'snakeRestartProgress',
+        readyCount: readyCount,
+        totalHumans: humanPlayers.length
+    });
+    
+    // If all humans are ready, restart the game
+    if (readyCount === humanPlayers.length && humanPlayers.length > 0) {
+        // Reset ready flags
+        room.players.forEach(p => p.readyForRestart = false);
+        
+        // Reinitialize the snake game
+        initializeSnakeGame(room);
+    }
 }
 
 // Start server

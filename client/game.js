@@ -18,6 +18,15 @@ let currentPlayerId = null;
 let gameStarted = false;
 let trick = [];
 let selectedCards = []; // For Big 2 multi-card selection
+
+// Snake game state
+let snakeBoardWidth = 40;
+let snakeBoardHeight = 30;
+let snakePlayers = []; // Array of {id, name, color, snake, score, alive}
+let snakeFood = [];
+let snakeCellSize = 20; // Pixels per cell
+let snakeGraphics = null; // Phaser graphics for snake rendering
+let snakeKeyListeners = null; // Keyboard listeners for snake
 let currentPlay = [];   // Current play on table (Big 2)
 let canFollow = true;   // Whether you can follow current play (Big 2)
 let playHistory = [];   // Last 10 plays for Big 2
@@ -190,6 +199,23 @@ function handleServerMessage(data) {
             handleInitiativeGained(data);
             break;
             
+        // Snake specific messages
+        case 'snakeGameStarted':
+            handleSnakeGameStarted(data);
+            break;
+            
+        case 'snakeState':
+            handleSnakeState(data);
+            break;
+            
+        case 'snakeGameOver':
+            handleSnakeGameOver(data);
+            break;
+            
+        case 'snakePlayerLeft':
+            // Just update player list; the server continues the game
+            break;
+            
         case 'error':
             showError(data.message);
             break;
@@ -233,7 +259,10 @@ function showRoomInfo() {
     document.getElementById('lobby').style.display = 'none';
     document.getElementById('roomInfo').style.display = 'block';
     document.getElementById('roomIdDisplay').textContent = roomId;
-    document.getElementById('playerCount').textContent = players.length;
+    
+    // Show correct max player count based on game type
+    const maxPlayers = gameType === 'snake' ? 10 : 4;
+    document.getElementById('playerCount').textContent = `${players.length}/${maxPlayers}`;
     
     // Show start button only for host (first player)
     if (players.length > 0 && players[0].id === clientId) {
@@ -252,16 +281,31 @@ function showGameUI() {
     document.getElementById('players').style.display = 'block';
     document.getElementById('instructions').style.display = 'block';
     
-    // Update instructions for Big 2
-    if (gameType === 'big2') {
-        const list = document.getElementById('instructionsList');
-        if (list) {
+    // Update instructions based on game type
+    const list = document.getElementById('instructionsList');
+    if (list) {
+        if (gameType === 'big2') {
             list.innerHTML = `
                 <li>Play the 3 of Diamonds to start</li>
                 <li>Play 1, 2, or 5 cards (singles, pairs, poker hands)</li>
                 <li>No triples allowed!</li>
                 <li>Beat the previous play or pass</li>
                 <li>First to empty hand wins!</li>
+            `;
+        } else if (gameType === 'snake') {
+            list.innerHTML = `
+                <li>Arrow keys or WASD to move</li>
+                <li>Eat food (yellow dots) to grow</li>
+                <li>Avoid walls and other snakes</li>
+                <li>Highest score wins!</li>
+            `;
+        } else {
+            // Hearts default
+            list.innerHTML = `
+                <li>Play the 2 of Clubs to start</li>
+                <li>Follow suit if you can</li>
+                <li>Try to avoid hearts and the Queen of Spades</li>
+                <li>Lowest score wins!</li>
             `;
         }
     }
@@ -281,9 +325,18 @@ function updatePlayerList() {
         const nameText = isMe ? `${player.name} (You)` : player.name;
         const aiText = player.isAI ? ' 🤖' : '';
         
+        // For Snake, show score and alive status
+        let scoreText = '';
+        if (gameType === 'snake') {
+            const aliveText = player.alive === false ? ' 💀' : '';
+            scoreText = `${player.score || 0} pts${aliveText}`;
+        } else {
+            scoreText = `${player.score || 0} pts`;
+        }
+        
         div.innerHTML = `
             <span>${nameText}${aiText}</span>
-            <span class="score">${player.score || 0} pts</span>
+            <span class="score">${scoreText}</span>
         `;
         
         listEl.appendChild(div);
@@ -291,7 +344,10 @@ function updatePlayerList() {
     
     // Update room info player count
     const pc = document.getElementById('playerCount');
-    if (pc) pc.textContent = players.length;
+    if (pc) {
+        const maxPlayers = gameType === 'snake' ? 10 : 4;
+        pc.textContent = `${players.length}/${maxPlayers}`;
+    }
 }
 
 function renderHand() {
@@ -895,6 +951,215 @@ function getPlayerPositions() {
     ];
 }
 
+// ===== Snake Game Handlers =====
+
+function handleSnakeGameStarted(data) {
+    gameStarted = true;
+    gameType = 'snake';
+    snakeBoardWidth = data.boardWidth || 40;
+    snakeBoardHeight = data.boardHeight || 30;
+    snakePlayers = data.players || [];
+    snakeFood = data.food || [];
+    
+    hideLobby();
+    showGameUI();
+    updatePlayerList();
+    
+    // Set up Snake rendering
+    setupSnakeScene();
+    
+    // Set up keyboard controls
+    setupSnakeControls();
+    
+    showStatus('Snake game started! Use arrow keys or WASD to move.', 3000);
+}
+
+function handleSnakeState(data) {
+    snakePlayers = data.players || [];
+    snakeFood = data.food || [];
+    updatePlayerList();
+    renderSnake();
+}
+
+function handleSnakeGameOver(data) {
+    gameStarted = false;
+    
+    // Clean up snake controls
+    if (snakeKeyListeners) {
+        snakeKeyListeners.forEach(k => k.destroy());
+        snakeKeyListeners = null;
+    }
+    
+    const winner = data.winner;
+    let message = winner ? `🏆 ${winner.name} wins with ${winner.score} points!` : 'Game Over!';
+    showStatus(message, 5000);
+    
+    // Show final scores
+    showSnakeFinalScores(data.players);
+}
+
+function setupSnakeScene() {
+    if (!scene) return;
+    
+    // Clear existing content
+    scene.children.removeAll(true);
+    
+    // Calculate cell size to fit the screen
+    const screenWidth = scene.scale.width;
+    const screenHeight = scene.scale.height;
+    
+    // Leave some padding
+    const padding = 40;
+    const availableWidth = screenWidth - padding * 2;
+    const availableHeight = screenHeight - padding * 2;
+    
+    snakeCellSize = Math.min(
+        Math.floor(availableWidth / snakeBoardWidth),
+        Math.floor(availableHeight / snakeBoardHeight)
+    );
+    
+    const boardPixelWidth = snakeBoardWidth * snakeCellSize;
+    const boardPixelHeight = snakeBoardHeight * snakeCellSize;
+    const offsetX = (screenWidth - boardPixelWidth) / 2;
+    const offsetY = (screenHeight - boardPixelHeight) / 2;
+    
+    // Draw board background
+    const boardBg = scene.add.graphics();
+    boardBg.fillStyle(0x0a4d2e, 1);
+    boardBg.fillRect(offsetX, offsetY, boardPixelWidth, boardPixelHeight);
+    
+    // Draw grid (subtle)
+    boardBg.lineStyle(1, 0x1a5c3a, 0.3);
+    for (let x = 0; x <= snakeBoardWidth; x++) {
+        boardBg.moveTo(offsetX + x * snakeCellSize, offsetY);
+        boardBg.lineTo(offsetX + x * snakeCellSize, offsetY + boardPixelHeight);
+    }
+    for (let y = 0; y <= snakeBoardHeight; y++) {
+        boardBg.moveTo(offsetX, offsetY + y * snakeCellSize);
+        boardBg.lineTo(offsetX + boardPixelWidth, offsetY + y * snakeCellSize);
+    }
+    boardBg.strokePath();
+    
+    // Store offset for rendering
+    scene.snakeOffsetX = offsetX;
+    scene.snakeOffsetY = offsetY;
+    
+    // Create graphics object for snake rendering
+    snakeGraphics = scene.add.graphics();
+    
+    // Initial render
+    renderSnake();
+}
+
+function renderSnake() {
+    if (!scene || !snakeGraphics) return;
+    
+    snakeGraphics.clear();
+    
+    const offsetX = scene.snakeOffsetX || 0;
+    const offsetY = scene.snakeOffsetY || 0;
+    
+    // Draw food
+    snakeFood.forEach(food => {
+        const x = offsetX + food.x * snakeCellSize + snakeCellSize / 2;
+        const y = offsetY + food.y * snakeCellSize + snakeCellSize / 2;
+        
+        snakeGraphics.fillStyle(0xffeb3b, 1);
+        snakeGraphics.fillCircle(x, y, snakeCellSize / 2 - 2);
+    });
+    
+    // Draw each player's snake
+    snakePlayers.forEach(player => {
+        if (!player.alive || !player.snake) return;
+        
+        const color = parseInt(player.color?.replace('#', '0x') || '0x4CAF50');
+        
+        player.snake.forEach((seg, index) => {
+            const x = offsetX + seg.x * snakeCellSize;
+            const y = offsetY + seg.y * snakeCellSize;
+            
+            // Head is slightly larger/brighter
+            if (index === 0) {
+                snakeGraphics.fillStyle(color, 1);
+                snakeGraphics.fillRoundedRect(x + 1, y + 1, snakeCellSize - 2, snakeCellSize - 2, 4);
+                
+                // Eyes
+                snakeGraphics.fillStyle(0xffffff, 1);
+                const eyeSize = snakeCellSize / 6;
+                const eyeOffset = snakeCellSize / 4;
+                snakeGraphics.fillCircle(x + eyeOffset, y + eyeOffset, eyeSize);
+                snakeGraphics.fillCircle(x + snakeCellSize - eyeOffset, y + eyeOffset, eyeSize);
+            } else {
+                snakeGraphics.fillStyle(color, 0.8);
+                snakeGraphics.fillRoundedRect(x + 2, y + 2, snakeCellSize - 4, snakeCellSize - 4, 3);
+            }
+        });
+    });
+}
+
+function setupSnakeControls() {
+    if (!scene) return;
+    
+    // Clean up old listeners
+    if (snakeKeyListeners) {
+        snakeKeyListeners.forEach(k => k.destroy());
+    }
+    snakeKeyListeners = [];
+    
+    // Arrow keys and WASD
+    const keys = {
+        'UP': Phaser.Input.Keyboard.KeyCodes.UP,
+        'DOWN': Phaser.Input.Keyboard.KeyCodes.DOWN,
+        'LEFT': Phaser.Input.Keyboard.KeyCodes.LEFT,
+        'RIGHT': Phaser.Input.Keyboard.KeyCodes.RIGHT,
+        'W': Phaser.Input.Keyboard.KeyCodes.W,
+        'A': Phaser.Input.Keyboard.KeyCodes.A,
+        'S': Phaser.Input.Keyboard.KeyCodes.S,
+        'D': Phaser.Input.Keyboard.KeyCodes.D
+    };
+    
+    Object.keys(keys).forEach(name => {
+        const key = scene.input.keyboard.addKey(keys[name]);
+        key.on('down', () => {
+            let direction;
+            switch (name) {
+                case 'UP': case 'W': direction = 'up'; break;
+                case 'DOWN': case 'S': direction = 'down'; break;
+                case 'LEFT': case 'A': direction = 'left'; break;
+                case 'RIGHT': case 'D': direction = 'right'; break;
+            }
+            if (direction) {
+                sendMessage({ type: 'snakeInput', direction });
+            }
+        });
+        snakeKeyListeners.push(key);
+    });
+}
+
+function showSnakeFinalScores(playerList) {
+    const scoresDiv = document.getElementById('scores');
+    if (!scoresDiv) return;
+    
+    scoresDiv.style.display = 'block';
+    
+    // Sort by score descending
+    const sorted = [...playerList].sort((a, b) => b.score - a.score);
+    
+    let html = '<h3>🐍 Snake Results</h3><table><tr><th>Rank</th><th>Player</th><th>Score</th></tr>';
+    sorted.forEach((p, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
+        const status = p.alive ? '' : ' (Dead)';
+        html += `<tr><td>${i+1} ${medal}</td><td>${p.name}${status}</td><td>${p.score}</td></tr>`;
+    });
+    html += '</table>';
+    
+    scoresDiv.innerHTML = html;
+    
+    setTimeout(() => {
+        scoresDiv.style.display = 'none';
+    }, 10000);
+}
+
 // Phaser scene functions
 function preload() {
     // No assets to preload - cards are drawn programmatically
@@ -909,8 +1174,12 @@ function create() {
     // Handle resize
     scene.scale.on('resize', (gameSize) => {
         scene.cameras.main.setViewport(0, 0, gameSize.width, gameSize.height);
-        drawTable();
-        renderHand();
+        if (gameType === 'snake' && gameStarted) {
+            setupSnakeScene();
+        } else {
+            drawTable();
+            renderHand();
+        }
     });
 }
 

@@ -99,6 +99,13 @@ function generateId() {
     return Math.random().toString(36).substring(2, 15);
 }
 
+// Snake colors for player identification
+const SNAKE_COLORS = ['#4CAF50', '#2196F3', '#FF9800', '#9C27B0', '#F44336', '#00BCD4', '#795548', '#607D8B', '#E91E63', '#8BC34A'];
+
+function getRandomSnakeColor() {
+    return SNAKE_COLORS[Math.floor(Math.random() * SNAKE_COLORS.length)];
+}
+
 function sendToClient(ws, data) {
     if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(data));
@@ -156,6 +163,10 @@ function handleMessage(ws, data) {
             leaveRoom(ws, client);
             break;
             
+        case 'snakeInput':
+            handleSnakeInput(ws, client, data.direction);
+            break;
+            
         default:
             console.log('Unknown message type:', data.type);
     }
@@ -172,6 +183,10 @@ function handleDisconnect(ws) {
             room.players = room.players.filter(p => p.id !== client.id);
             
             if (room.players.length === 0) {
+                // Stop any game loop (Snake)
+                if (room.gameLoopInterval) {
+                    clearInterval(room.gameLoopInterval);
+                }
                 rooms.delete(client.roomId);
             } else {
                 broadcastToRoom(client.roomId, {
@@ -180,13 +195,27 @@ function handleDisconnect(ws) {
                     playerName: client.name
                 });
                 
-                // If game was in progress, end it
+                // If game was in progress, handle based on game type
                 if (room.gameState !== GAME_STATES.WAITING) {
-                    broadcastToRoom(client.roomId, {
-                        type: 'gameEnded',
-                        reason: 'Player disconnected'
-                    });
-                    room.gameState = GAME_STATES.WAITING;
+                    if (room.gameType === 'snake') {
+                        // For Snake: if only 1 player left, end game
+                        if (room.players.length === 1) {
+                            endSnakeGame(room);
+                        } else {
+                            // Continue but mark the disconnected player as dead
+                            broadcastToRoom(client.roomId, {
+                                type: 'snakePlayerLeft',
+                                playerId: client.id
+                            });
+                        }
+                    } else {
+                        // Card games: end the game
+                        broadcastToRoom(client.roomId, {
+                            type: 'gameEnded',
+                            reason: 'Player disconnected'
+                        });
+                        room.gameState = GAME_STATES.WAITING;
+                    }
                 }
             }
         }
@@ -197,6 +226,11 @@ function handleDisconnect(ws) {
 
 function createRoom(ws, client, gameType = 'hearts') {
     const roomId = generateId().slice(0, 6).toUpperCase();
+    
+    // Snake game has different room structure
+    if (gameType === 'snake') {
+        return createSnakeRoom(ws, client, roomId);
+    }
     
     const room = {
         id: roomId,
@@ -235,6 +269,49 @@ function createRoom(ws, client, gameType = 'hearts') {
     console.log(`Room ${roomId} (${gameType}) created by ${client.name}`);
 }
 
+/**
+ * Create a Snake game room (supports up to 10 players)
+ */
+function createSnakeRoom(ws, client, roomId) {
+    const room = {
+        id: roomId,
+        gameType: 'snake',
+        players: [{
+            id: client.id,
+            name: client.name,
+            ws: ws,
+            isAI: false,
+            // Snake-specific state
+            snake: [],       // Array of {x, y} segments
+            direction: 'right',
+            nextDirection: 'right',
+            score: 0,
+            alive: true,
+            color: getRandomSnakeColor()
+        }],
+        gameState: GAME_STATES.WAITING,
+        // Snake game config
+        boardWidth: 40,
+        boardHeight: 30,
+        tickRate: 100,      // ms per tick
+        food: [],           // Array of {x, y}
+        maxPlayers: 10,
+        gameLoopInterval: null
+    };
+    
+    rooms.set(roomId, room);
+    client.roomId = roomId;
+    
+    sendToClient(ws, {
+        type: 'roomCreated',
+        roomId: roomId,
+        gameType: 'snake',
+        players: room.players.map(p => ({ id: p.id, name: p.name, isAI: p.isAI, score: 0 }))
+    });
+    
+    console.log(`Snake room ${roomId} created by ${client.name}`);
+}
+
 function joinRoom(ws, client, roomId) {
     const room = rooms.get(roomId);
     
@@ -243,7 +320,10 @@ function joinRoom(ws, client, roomId) {
         return;
     }
     
-    if (room.players.length >= 4) {
+    // Snake allows up to 10 players
+    const maxPlayers = room.gameType === 'snake' ? (room.maxPlayers || 10) : 4;
+    
+    if (room.players.length >= maxPlayers) {
         sendToClient(ws, { type: 'error', message: 'Room is full' });
         return;
     }
@@ -253,29 +333,52 @@ function joinRoom(ws, client, roomId) {
         return;
     }
     
-    room.players.push({
-        id: client.id,
-        name: client.name,
-        ws: ws,
-        hand: [],
-        score: 0,
-        tricksWon: 0,
-        isAI: false
-    });
+    // Snake-specific player structure
+    if (room.gameType === 'snake') {
+        room.players.push({
+            id: client.id,
+            name: client.name,
+            ws: ws,
+            isAI: false,
+            snake: [],
+            direction: 'right',
+            nextDirection: 'right',
+            score: 0,
+            alive: true,
+            color: getRandomSnakeColor()
+        });
+    } else {
+        room.players.push({
+            id: client.id,
+            name: client.name,
+            ws: ws,
+            hand: [],
+            score: 0,
+            tricksWon: 0,
+            isAI: false
+        });
+    }
     
     client.roomId = roomId;
     
     // Broadcast to all in room
+    const playerList = room.players.map(p => ({ 
+        id: p.id, 
+        name: p.name, 
+        isAI: p.isAI,
+        ...(room.gameType === 'snake' ? { score: p.score } : {})
+    }));
+    
     broadcastToRoom(roomId, {
         type: 'playerJoined',
         player: { id: client.id, name: client.name },
-        players: room.players.map(p => ({ id: p.id, name: p.name, isAI: p.isAI }))
+        players: playerList
     });
     
     sendToClient(ws, {
         type: 'roomJoined',
         roomId: roomId,
-        players: room.players.map(p => ({ id: p.id, name: p.name, isAI: p.isAI }))
+        players: playerList
     });
     
     console.log(`${client.name} joined room ${roomId}`);
@@ -286,6 +389,16 @@ function startGame(ws, client) {
     
     if (!room || room.players[0].id !== client.id) {
         sendToClient(ws, { type: 'error', message: 'Only host can start the game' });
+        return;
+    }
+    
+    // Snake can start with 1+ players (no AI needed, realtime game)
+    if (room.gameType === 'snake') {
+        if (room.players.length < 1) {
+            sendToClient(ws, { type: 'error', message: 'Need at least 1 player' });
+            return;
+        }
+        initializeSnakeGame(room);
         return;
     }
     
@@ -1362,6 +1475,287 @@ function leaveRoom(ws, client) {
     if (client.roomId) {
         handleDisconnect(ws);
     }
+}
+
+// ===== Snake Game Functions =====
+
+/**
+ * Initialize a Snake game room
+ */
+function initializeSnakeGame(room) {
+    room.gameState = GAME_STATES.PLAYING;
+    room.food = [];
+    
+    // Initialize each player's snake at a unique starting position
+    const startPositions = generateSnakeStartPositions(room.players.length, room.boardWidth, room.boardHeight);
+    
+    room.players.forEach((player, index) => {
+        const start = startPositions[index];
+        player.snake = [
+            { x: start.x, y: start.y },
+            { x: start.x - 1, y: start.y },
+            { x: start.x - 2, y: start.y }
+        ];
+        player.direction = 'right';
+        player.nextDirection = 'right';
+        player.score = 0;
+        player.alive = true;
+    });
+    
+    // Spawn initial food
+    spawnFood(room);
+    spawnFood(room);
+    
+    // Broadcast game start
+    broadcastToRoom(room.id, {
+        type: 'snakeGameStarted',
+        boardWidth: room.boardWidth,
+        boardHeight: room.boardHeight,
+        players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            snake: p.snake,
+            score: p.score,
+            alive: p.alive
+        })),
+        food: room.food
+    });
+    
+    // Start the game loop
+    if (room.gameLoopInterval) clearInterval(room.gameLoopInterval);
+    room.gameLoopInterval = setInterval(() => {
+        snakeGameLoop(room);
+    }, room.tickRate);
+    
+    console.log(`Snake game started in room ${room.id} with ${room.players.length} players`);
+}
+
+/**
+ * Generate non-overlapping start positions for snakes
+ */
+function generateSnakeStartPositions(count, boardWidth, boardHeight) {
+    const positions = [];
+    const margin = 5;
+    const spacing = Math.floor((boardWidth - margin * 2) / Math.max(1, count));
+    
+    for (let i = 0; i < count; i++) {
+        positions.push({
+            x: margin + i * spacing + 3,
+            y: Math.floor(boardHeight / 2)
+        });
+    }
+    return positions;
+}
+
+/**
+ * Spawn a food item at a random empty location
+ */
+function spawnFood(room) {
+    // Collect all occupied cells
+    const occupied = new Set();
+    
+    room.players.forEach(player => {
+        if (player.alive) {
+            player.snake.forEach(seg => {
+                occupied.add(`${seg.x},${seg.y}`);
+            });
+        }
+    });
+    
+    room.food.forEach(f => {
+        occupied.add(`${f.x},${f.y}`);
+    });
+    
+    // Find empty cells
+    const emptyCells = [];
+    for (let x = 0; x < room.boardWidth; x++) {
+        for (let y = 0; y < room.boardHeight; y++) {
+            if (!occupied.has(`${x},${y}`)) {
+                emptyCells.push({ x, y });
+            }
+        }
+    }
+    
+    if (emptyCells.length > 0) {
+        const pos = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+        room.food.push(pos);
+    }
+}
+
+/**
+ * Main Snake game loop - runs every tick
+ */
+function snakeGameLoop(room) {
+    if (room.gameState !== GAME_STATES.PLAYING) {
+        if (room.gameLoopInterval) {
+            clearInterval(room.gameLoopInterval);
+            room.gameLoopInterval = null;
+        }
+        return;
+    }
+    
+    let anyAlive = false;
+    
+    // Update each player's snake
+    room.players.forEach(player => {
+        if (!player.alive) return;
+        
+        anyAlive = true;
+        
+        // Apply direction change (prevents 180-degree turns)
+        const current = player.direction;
+        const next = player.nextDirection;
+        if (!((current === 'left' && next === 'right') ||
+              (current === 'right' && next === 'left') ||
+              (current === 'up' && next === 'down') ||
+              (current === 'down' && next === 'up'))) {
+            player.direction = next;
+        }
+        
+        // Calculate new head position
+        const head = player.snake[0];
+        let newHead = { x: head.x, y: head.y };
+        
+        switch (player.direction) {
+            case 'up': newHead.y--; break;
+            case 'down': newHead.y++; break;
+            case 'left': newHead.x--; break;
+            case 'right': newHead.x++; break;
+        }
+        
+        // Check wall collision
+        if (newHead.x < 0 || newHead.x >= room.boardWidth ||
+            newHead.y < 0 || newHead.y >= room.boardHeight) {
+            player.alive = false;
+            return;
+        }
+        
+        // Check self collision
+        for (let i = 0; i < player.snake.length; i++) {
+            if (player.snake[i].x === newHead.x && player.snake[i].y === newHead.y) {
+                player.alive = false;
+                return;
+            }
+        }
+        
+        // Check other player collisions
+        for (const other of room.players) {
+            if (other.id === player.id || !other.alive) continue;
+            for (const seg of other.snake) {
+                if (seg.x === newHead.x && seg.y === newHead.y) {
+                    player.alive = false;
+                    return;
+                }
+            }
+        }
+        
+        // Add new head
+        player.snake.unshift(newHead);
+        
+        // Check food collision
+        let ate = false;
+        for (let i = 0; i < room.food.length; i++) {
+            if (room.food[i].x === newHead.x && room.food[i].y === newHead.y) {
+                room.food.splice(i, 1);
+                player.score += 10;
+                ate = true;
+                spawnFood(room);
+                break;
+            }
+        }
+        
+        // Remove tail if didn't eat
+        if (!ate) {
+            player.snake.pop();
+        }
+    });
+    
+    // Check if game should end (only 0 or 1 players alive)
+    const alivePlayers = room.players.filter(p => p.alive);
+    
+    if (alivePlayers.length <= 1 && room.players.length > 1) {
+        // Game over
+        endSnakeGame(room);
+        return;
+    }
+    
+    // Broadcast updated state
+    broadcastToRoom(room.id, {
+        type: 'snakeState',
+        players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            snake: p.snake,
+            score: p.score,
+            alive: p.alive,
+            direction: p.direction
+        })),
+        food: room.food
+    });
+}
+
+/**
+ * Handle snake input (direction change) from a client
+ */
+function handleSnakeInput(ws, client, direction) {
+    const room = rooms.get(client.roomId);
+    
+    if (!room || room.gameType !== 'snake' || room.gameState !== GAME_STATES.PLAYING) {
+        return;
+    }
+    
+    const player = room.players.find(p => p.id === client.id);
+    if (!player || !player.alive) return;
+    
+    // Validate direction
+    const validDirections = ['up', 'down', 'left', 'right'];
+    if (!validDirections.includes(direction)) return;
+    
+    // Prevent 180-degree turns
+    const current = player.direction;
+    if ((current === 'left' && direction === 'right') ||
+        (current === 'right' && direction === 'left') ||
+        (current === 'up' && direction === 'down') ||
+        (current === 'down' && direction === 'up')) {
+        return;
+    }
+    
+    player.nextDirection = direction;
+}
+
+/**
+ * End a Snake game
+ */
+function endSnakeGame(room) {
+    room.gameState = GAME_STATES.GAME_END;
+    
+    if (room.gameLoopInterval) {
+        clearInterval(room.gameLoopInterval);
+        room.gameLoopInterval = null;
+    }
+    
+    // Determine winner (highest score, or last alive)
+    const winner = room.players.reduce((best, p) => {
+        if (!best) return p;
+        if (p.score > best.score) return p;
+        if (p.score === best.score && p.alive && !best.alive) return p;
+        return best;
+    }, null);
+    
+    broadcastToRoom(room.id, {
+        type: 'snakeGameOver',
+        winner: winner ? { id: winner.id, name: winner.name, score: winner.score } : null,
+        players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            score: p.score,
+            alive: p.alive
+        }))
+    });
+    
+    console.log(`Snake game ended in room ${room.id}. Winner: ${winner?.name || 'none'}`);
 }
 
 // Start server

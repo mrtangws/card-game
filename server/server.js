@@ -479,8 +479,8 @@ function findOrCreateSnakeGame(client) {
         players: [],
         gameState: GAME_STATES.WAITING,
         // World config
-        worldWidth: 1000,
-        worldHeight: 1000,
+        worldWidth: 200,
+        worldHeight: 200,
         viewportWidth: 40,
         viewportHeight: 30,
         // Tick/speed config
@@ -506,7 +506,7 @@ function findOrCreateSnakeGame(client) {
 }
 
 function createAISnakePlayer(index) {
-    const spawn = randomSpawnPosition(1000, 1000, 5);
+    const spawn = randomSpawnPosition(200, 200, 5);
     return {
         id: `ai_${generateId()}`,
         name: generateAIName(), // e.g., "Red Fox", "Blue Cobra"
@@ -1659,8 +1659,8 @@ function initializeSnakeGame(room) {
     room.food = [];
     
     // Use world size (new) or fallback to board size (old)
-    const worldW = room.worldWidth || room.boardWidth || 1000;
-    const worldH = room.worldHeight || room.boardHeight || 1000;
+    const worldW = room.worldWidth || room.boardWidth || 200;
+    const worldH = room.worldHeight || room.boardHeight || 200;
     const margin = 5;
     
     room.players.forEach((player) => {
@@ -1805,8 +1805,8 @@ function spawnFood(room) {
     });
     
     // Determine world size
-    const worldW = room.worldWidth || room.boardWidth || 1000;
-    const worldH = room.worldHeight || room.boardHeight || 1000;
+    const worldW = room.worldWidth || room.boardWidth || 200;
+    const worldH = room.worldHeight || room.boardHeight || 200;
     
     // Various apple colors
     const appleColors = ['#ffeb3b', '#ff5722', '#e91e63', '#9c27b0', '#2196f3', '#4caf50', '#ff9800', '#00bcd4'];
@@ -1844,28 +1844,14 @@ function snakeGameLoop(room) {
     }
     
     const now = Date.now();
-    const worldW = room.worldWidth || room.boardWidth || 1000;
-    const worldH = room.worldHeight || room.boardHeight || 1000;
+    const worldW = room.worldWidth || room.boardWidth || 200;
+    const worldH = room.worldHeight || room.boardHeight || 200;
     let anyAlive = false;
     
     room.players.forEach(player => {
         if (!player.alive) return;
         
-        // Inactivity kick: if human has no input for 30s, destroy and remove
-        if (!player.isAI) {
-            const inactiveTime = now - (player.lastInputTime || now);
-            if (inactiveTime > 30000) {
-                console.log(`Player ${player.name} kicked for inactivity (30s)`);
-                player.alive = false;
-                if (player.ws) {
-                    sendToClient(player.ws, { type: 'snakeYouDied', roomId: room.id, reason: 'Inactivity' });
-                }
-                setTimeout(() => {
-                    room.players = room.players.filter(p => p.id !== player.id);
-                }, 500);
-                return;
-            }
-        }
+        // No inactivity kick - humans can idle indefinitely
         
         anyAlive = true;
         
@@ -1982,7 +1968,7 @@ function handleSnakeDeath(room, player) {
         // Respawn AI at low speed after short delay
         setTimeout(() => {
             if (room.gameState !== GAME_STATES.PLAYING) return;
-            const spawn = randomSpawnPosition(room.worldWidth || 1000, room.worldHeight || 1000, 5);
+            const spawn = randomSpawnPosition(room.worldWidth || 200, room.worldHeight || 200, 5);
             const dir = ['up','down','left','right'][Math.floor(Math.random()*4)];
             player.snake = createInitialSnakeSegments(spawn.x, spawn.y, dir);
             player.direction = dir;

@@ -41,8 +41,9 @@ const SNAKE_AI_COLORS = [
     0x66ff66, 0x6666ff, 0xff6666, 0xffff66, 0xff66ff,
     0x66ffff, 0xffaa66, 0xaa66ff, 0xaaff66, 0xff66aa
 ];
-const SNAKE_BASE_SPEED = 3; // Base ticks per move
-const SNAKE_MAX_SPEED_MULTIPLIER = 4; // Maximum speed multiplier (capped at 4x base)
+const SNAKE_BASE_SPEED = 5; // Base ticks per move (higher = slower)
+const SNAKE_MIN_SPEED = 1; // Minimum ticks per move (fastest possible)
+const SNAKE_SPEED_SCALE = 0.1; // Speed increase per unit length (10% faster per length)
 const SNAKE_FOOD_COLORS = [
     0xff0000, // Red
     0xff8800, // Orange
@@ -1606,7 +1607,7 @@ function joinSnakeGame(ws, client, room) {
         growth: 0, // Already at length 3
         isAI: false,
         moveCounter: 0,
-        speed: SNAKE_BASE_SPEED
+        speed: SNAKE_BASE_SPEED // Starting speed for length 3
     };
     
     // Notify all players
@@ -1679,7 +1680,7 @@ function initializeSnakeGameWithAI(room) {
         growth: 0, // Already at length 3
         isAI: false,
         moveCounter: 0,
-        speed: SNAKE_BASE_SPEED
+        speed: SNAKE_BASE_SPEED // Starting speed for length 3
     };
     
     // Spawn AI snakes
@@ -1778,7 +1779,7 @@ function spawnAISnake(room) {
         growth: 0, // Already at length 3
         isAI: true,
         moveCounter: 0,
-        speed: SNAKE_BASE_SPEED + 0.5 // AI starts slightly slower
+        speed: SNAKE_BASE_SPEED * 1.2 // AI starts 20% slower than humans
     };
 }
 
@@ -1802,14 +1803,16 @@ function getRandomDirection() {
 
 /**
  * Calculate snake speed based on length
- * Formula: BASE_SPEED * (1 + length / 10), capped at 4 * BASE_SPEED
+ * Snakes get FASTER (fewer ticks) as they grow longer
+ * Formula: BASE_SPEED / (1 + length * SPEED_SCALE), capped at MIN_SPEED
  */
 function calculateSnakeSpeed(snake) {
     const length = snake.body.length;
-    const speedMultiplier = 1 + length / 10;
-    const calculatedSpeed = SNAKE_BASE_SPEED * speedMultiplier;
-    const maxSpeed = SNAKE_BASE_SPEED * SNAKE_MAX_SPEED_MULTIPLIER;
-    return Math.min(calculatedSpeed, maxSpeed);
+    // As length increases, denominator increases, so speed decreases (faster movement)
+    const speedFactor = 1 + (length - 3) * SNAKE_SPEED_SCALE; // -3 because start length is 3
+    const calculatedSpeed = SNAKE_BASE_SPEED / speedFactor;
+    // Cap at minimum speed (fastest allowed)
+    return Math.max(SNAKE_MIN_SPEED, calculatedSpeed);
 }
 
 /**

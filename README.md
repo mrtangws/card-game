@@ -74,7 +74,7 @@ Navigate to `http://localhost:8080`
 3. **Spawning**: Snakes spawn randomly, at least 5 units from world edges
 4. **Starting Length**: All snakes start with length 3 (head + 2 segments)
 5. **Movement**: Use Arrow Keys or WASD to control your snake
-6. **Speed**: Snakes get faster as they grow (capped at maximum speed)
+6. **Speed Progression**: Snakes get faster as they grow! Formula: 5 / (1 + (length-3) * 0.1) ticks per move, capped at 1 tick (5x faster at max)
 7. **Food**: 200+ colorful apples to eat - grow longer with each one!
 8. **Score**: Your score equals your snake's length
 9. **Apple Spawning**: New apples spawn periodically every 0.5 seconds
@@ -136,7 +136,7 @@ card-game/
   - Real-time 10Hz game loop supporting up to 10 human players
   - Auto-join or create game with 10 AI snakes
   - AI pathfinding (food seeking, obstacle avoidance)
-  - Variable speed based on snake length
+  - Speed progression: snakes get faster as they grow longer
   - Collision detection and food spawning
 - Score tracking and leaderboards
 

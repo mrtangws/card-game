@@ -1133,16 +1133,15 @@ function handleSnakeState(data) {
 }
 
 function handleSnakeDied(data) {
-    if (data.isAI) {
-        showStatus(`${data.playerName} died! Length: ${data.score}`, 1500);
-    } else {
-        showStatus(`${data.playerName} died! Length: ${data.score}`, 3000);
-    }
+    const message = data.isAI 
+        ? `💀 ${data.playerName} died! Length: ${data.score}`
+        : `💀 ${data.playerName} died! Length: ${data.score}`;
+    showBottomStatus(message, data.isAI ? 2000 : 4000);
 }
 
 function handleSnakePlayerDied(data) {
-    // Player died - show game over and return to lobby
-    showStatus(`💀 You died! Final Length: ${data.length}`, 5000);
+    // Player died - show game over at bottom and return to lobby
+    showBottomStatus(`💀 You died! Final Length: ${data.length}`, 5000);
     
     // Reset game state
     snakeGame = null;
@@ -1163,6 +1162,45 @@ function handleSnakePlayerDied(data) {
     setTimeout(() => {
         returnToLobby();
     }, 3000);
+}
+
+function showBottomStatus(message, duration = 3000) {
+    // Create or get the bottom status element
+    let bottomStatus = document.getElementById('bottomStatus');
+    if (!bottomStatus) {
+        bottomStatus = document.createElement('div');
+        bottomStatus.id = 'bottomStatus';
+        bottomStatus.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 100;
+            text-align: center;
+            min-width: 250px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        `;
+        document.body.appendChild(bottomStatus);
+    }
+    
+    bottomStatus.textContent = message;
+    bottomStatus.style.display = 'block';
+    
+    // Clear any existing timeout
+    if (bottomStatus.timeoutId) {
+        clearTimeout(bottomStatus.timeoutId);
+    }
+    
+    // Hide after duration
+    bottomStatus.timeoutId = setTimeout(() => {
+        bottomStatus.style.display = 'none';
+    }, duration);
 }
 
 function handleSnakeLeaderboard(data) {
@@ -1217,6 +1255,12 @@ function returnToLobby() {
     document.getElementById('players').style.display = 'none';
     document.getElementById('instructions').style.display = 'none';
     document.getElementById('gameControls').style.display = 'none';
+    
+    // Clear bottom status
+    const bottomStatus = document.getElementById('bottomStatus');
+    if (bottomStatus) {
+        bottomStatus.style.display = 'none';
+    }
     
     // Clear game canvas
     if (scene) {

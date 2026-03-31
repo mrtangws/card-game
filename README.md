@@ -79,7 +79,7 @@ Navigate to `http://localhost:8080`
 8. **Score**: Your score equals your snake's length
 9. **Apple Spawning**: New apples spawn periodically every 0.5 seconds
 10. **Collisions**: Avoid walls, other snakes, and yourself
-11. **AI Opponents**: 10 AI snakes hunt food and avoid obstacles
+11. **AI Opponents**: 10 AI snakes with color + animal names (e.g., "Purple Worm") hunt food
 12. **Live Leaderboard**: Top 10 longest snakes updated every second
 13. **Death**: Human players return to lobby when they die
 14. **Supports**: Up to 10 human players per game!

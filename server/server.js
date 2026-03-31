@@ -58,6 +58,25 @@ const SNAKE_FOOD_COLORS = [
     0xff0088  // Pink
 ];
 
+const ANIMAL_NAMES = [
+    'Worm', 'Snake', 'Python', 'Cobra', 'Viper', 'Boa', 'Mamba', 'Adder',
+    'Eel', 'Serpent', 'Dragon', 'Lizard', 'Gecko', 'Iguana', 'Chameleon',
+    'Basilisk', 'Wyvern', 'Naga', 'Hydra', 'Leviathan'
+];
+
+const COLOR_NAMES = {
+    0x66ff66: 'Green',
+    0x6666ff: 'Blue',
+    0xff6666: 'Red',
+    0xffff66: 'Yellow',
+    0xff66ff: 'Magenta',
+    0x66ffff: 'Cyan',
+    0xffaa66: 'Orange',
+    0xaa66ff: 'Purple',
+    0xaaff66: 'Lime',
+    0xff66aa: 'Pink'
+};
+
 // Big 2 specific constants
 // Big 2 card ranking: 3 is smallest, 2 is biggest
 const BIG2_RANKS = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'];
@@ -1721,6 +1740,20 @@ function createInitialSnakeBody(headPos, direction) {
 }
 
 /**
+ * Get a color name from the color value
+ */
+function getColorName(color) {
+    return COLOR_NAMES[color] || 'Unknown';
+}
+
+/**
+ * Get a random animal name
+ */
+function getRandomAnimal() {
+    return ANIMAL_NAMES[Math.floor(Math.random() * ANIMAL_NAMES.length)];
+}
+
+/**
  * Spawn an AI snake
  */
 function spawnAISnake(room) {
@@ -1729,14 +1762,17 @@ function spawnAISnake(room) {
     const spawnPos = getRandomSpawnPosition(game);
     const aiDir = getRandomDirection();
     const colorIndex = (game.aiCounter % SNAKE_AI_COLORS.length);
+    const color = SNAKE_AI_COLORS[colorIndex];
+    const colorName = getColorName(color);
+    const animalName = getRandomAnimal();
     
     game.snakes[aiId] = {
         id: aiId,
-        name: `Bot ${game.aiCounter}`,
+        name: `${colorName} ${animalName}`,
         body: createInitialSnakeBody(spawnPos, aiDir),
         direction: aiDir,
         nextDirection: aiDir,
-        color: SNAKE_AI_COLORS[colorIndex],
+        color: color,
         alive: true,
         score: 0,
         growth: 0, // Already at length 3

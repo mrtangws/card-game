@@ -69,20 +69,32 @@ Navigate to `http://localhost:8080`
 
 #### Snake (Multiplayer)
 
-1. **Grid**: 40x30 playing field
-2. **Movement**: Use Arrow Keys or WASD to control your snake
-3. **Food**: Eat red food to grow and gain 10 points
-4. **Collisions**: Avoid walls, other snakes, and yourself
-5. **Winning**: Last snake alive wins! (or highest score in solo)
-6. **Supports**: Up to 10 concurrent players!
+1. **World Size**: Massive 1000x1000 world!
+2. **Viewport**: Each player sees a 40x30 viewport centered on their snake
+3. **Spawning**: Snakes spawn randomly, at least 5 units from world edges
+4. **Movement**: Use Arrow Keys or WASD to control your snake
+5. **Speed**: Snakes get faster as they grow (capped at maximum speed)
+6. **Food**: Eat red food to grow and gain 10 points
+7. **Collisions**: Avoid walls, other snakes, and yourself
+8. **AI Opponents**: 10 AI snakes hunt food and avoid obstacles
+9. **Death**: Human players return to lobby when they die
+10. **Supports**: Up to 10 human players per game!
 
 ### Controls
 
-- **Create Room**: Start a new game room
-- **Join Room**: Enter a room code to join
+- **Create Room**: Start a new game room (Hearts/Big 2)
+- **Join Room**: Enter a room code to join (Hearts/Big 2)
 - **Start Game**: Host can start (fills empty slots with AI for card games)
 - **Play Card**: Click on a card in your hand when it's your turn (card games)
-- **Snake Movement**: Arrow Keys or WASD (Snake game)
+- **Snake Start**: Auto-joins existing game or creates new one with 10 AI snakes
+- **Snake Movement**: Arrow Keys or WASD
+
+### Snake Game Lobby
+
+When you select Snake and click "Start Game":
+- If there's an existing game with < 10 players, you'll join it
+- Otherwise, a new game starts with 10 AI snakes
+- The lobby shows real-time counts of active games for each type
 
 ### Game Interface
 
@@ -111,10 +123,16 @@ card-game/
 - HTTP server serves static client files
 - Room management (create/join) with configurable max players
 - Game state management for multiple game types
+- Real-time lobby with active game counts
 - **Hearts**: Turn-based trick-taking with AI opponents
 - **Big 2**: Multi-card play with poker hand validation
-- **Snake**: Real-time 10Hz game loop supporting up to 10 concurrent players
-- Collision detection and food spawning
+- **Snake**: 
+  - Massive 1000x1000 world with per-player viewport
+  - Real-time 10Hz game loop supporting up to 10 human players
+  - Auto-join or create game with 10 AI snakes
+  - AI pathfinding (food seeking, obstacle avoidance)
+  - Variable speed based on snake length
+  - Collision detection and food spawning
 - Score tracking and leaderboards
 
 ### Client Features

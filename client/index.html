@@ -309,14 +309,30 @@
             </select>
         </div>
         
-        <h2>Create a Room</h2>
-        <button class="btn btn-primary" id="createBtn">Create Room</button>
-        
-        <h2>Join a Room</h2>
-        <div class="input-group">
-            <input type="text" id="roomCode" placeholder="Enter room code">
+        <!-- Active Game Counts -->
+        <div id="gameCounts" style="margin: 15px 0; padding: 10px; background: #f5f5f5; border-radius: 8px; font-size: 14px;">
+            <div><strong>Active Games:</strong></div>
+            <div>Hearts: <span id="heartsCount">0</span> | Big 2: <span id="big2Count">0</span> | Snake: <span id="snakeCount">0</span></div>
         </div>
-        <button class="btn btn-secondary" id="joinBtn">Join Room</button>
+        
+        <!-- Card Game Controls -->
+        <div id="cardGameControls">
+            <h2>Create a Room</h2>
+            <button class="btn btn-primary" id="createBtn">Create Room</button>
+            
+            <h2>Join a Room</h2>
+            <div class="input-group">
+                <input type="text" id="roomCode" placeholder="Enter room code">
+            </div>
+            <button class="btn btn-secondary" id="joinBtn">Join Room</button>
+        </div>
+        
+        <!-- Snake Game Controls (hidden by default) -->
+        <div id="snakeGameControls" style="display: none;">
+            <h2>Start Playing</h2>
+            <p style="color: #666; margin-bottom: 15px;">Join an existing game or start a new one with AI snakes!</p>
+            <button class="btn btn-primary" id="startSnakeBtn" style="font-size: 20px; padding: 15px 40px;">🐍 Start Game</button>
+        </div>
     </div>
     
     <div id="roomInfo" style="display:none;">

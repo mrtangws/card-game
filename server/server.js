@@ -25,14 +25,25 @@ const GAME_STATES = {
 };
 
 // Snake game constants
-const SNAKE_GRID_WIDTH = 40;
-const SNAKE_GRID_HEIGHT = 30;
+const SNAKE_WORLD_WIDTH = 1000;
+const SNAKE_WORLD_HEIGHT = 1000;
+const SNAKE_VIEWPORT_WIDTH = 40;
+const SNAKE_VIEWPORT_HEIGHT = 30;
 const SNAKE_TICK_RATE = 100; // ms per game tick
 const SNAKE_MAX_PLAYERS = 10;
+const SNAKE_MAX_AI = 10;
+const SNAKE_EDGE_MARGIN = 5;
 const SNAKE_COLORS = [
     0x00ff00, 0x0000ff, 0xff0000, 0xffff00, 0xff00ff,
     0x00ffff, 0xff8800, 0x8800ff, 0x88ff00, 0xff0088
 ];
+const SNAKE_AI_COLORS = [
+    0x66ff66, 0x6666ff, 0xff6666, 0xffff66, 0xff66ff,
+    0x66ffff, 0xffaa66, 0xaa66ff, 0xaaff66, 0xff66aa
+];
+const SNAKE_MIN_SPEED = 3; // ticks per move (slower)
+const SNAKE_MAX_SPEED = 1; // ticks per move (faster)
+const SNAKE_SPEED_GROWTH_FACTOR = 0.02; // speed increase per segment
 
 // Big 2 specific constants
 // Big 2 card ranking: 3 is smallest, 2 is biggest
@@ -43,6 +54,16 @@ const BIG2_SUIT_ORDER = { 'diamonds': 0, 'clubs': 1, 'hearts': 2, 'spades': 3 };
 // Client connections and game rooms
 const clients = new Map(); // ws -> clientData
 const rooms = new Map(); // roomId -> roomData
+
+// Track active games by type for lobby display
+const activeGames = {
+    hearts: 0,
+    big2: 0,
+    snake: 0
+};
+
+// Snake game queue - tracks available snake games with open slots
+const snakeGameQueue = new Set(); // Set of roomIds with space for more players
 
 // Create HTTP server for serving static files
 const server = http.createServer((req, res) => {
@@ -87,7 +108,12 @@ wss.on('connection', (ws) => {
     
     sendToClient(ws, {
         type: 'connected',
-        clientId: clientId
+        clientId: clientId,
+        gameCounts: {
+            hearts: activeGames.hearts,
+            big2: activeGames.big2,
+            snake: activeGames.snake
+        }
     });
     
     ws.on('message', (message) => {
@@ -144,6 +170,10 @@ function handleMessage(ws, data) {
             
         case 'joinRoom':
             joinRoom(ws, client, data.roomId);
+            break;
+            
+        case 'startSnakeGame':
+            startSnakeGame(ws, client);
             break;
             
         case 'startGame':
@@ -362,9 +392,14 @@ function startGame(ws, client) {
 function initializeGame(room) {
     // Route to Big 2 initialization if needed
     if (room.gameType === 'big2') {
+        activeGames.big2++;
         initializeBig2Game(room);
+        broadcastGameCounts();
         return;
     }
+    
+    activeGames.hearts++;
+    broadcastGameCounts();
     
     room.gameState = GAME_STATES.DEALING;
     room.roundNumber++;
@@ -1415,104 +1450,291 @@ function leaveRoom(ws, client) {
 // ==================== SNAKE GAME IMPLEMENTATION ====================
 
 /**
- * Initialize Snake game
+ * Send active game counts to all clients in lobby
  */
-function initializeSnakeGame(room) {
+function broadcastGameCounts() {
+    const counts = {
+        type: 'gameCounts',
+        hearts: activeGames.hearts,
+        big2: activeGames.big2,
+        snake: activeGames.snake
+    };
+    
+    // Send to all clients not in a room
+    clients.forEach((client, ws) => {
+        if (!client.roomId && ws.readyState === WebSocket.OPEN) {
+            sendToClient(ws, counts);
+        }
+    });
+}
+
+/**
+ * Start Snake game - auto-join existing or create new
+ */
+function startSnakeGame(ws, client) {
+    // Look for an existing snake game with space
+    let targetRoom = null;
+    for (const roomId of snakeGameQueue) {
+        const room = rooms.get(roomId);
+        if (room && room.gameType === 'snake' && room.gameState === GAME_STATES.PLAYING) {
+            const humanCount = room.players.filter(p => !p.isAI).length;
+            if (humanCount < SNAKE_MAX_PLAYERS) {
+                targetRoom = room;
+                break;
+            }
+        }
+    }
+    
+    if (targetRoom) {
+        // Join existing game
+        joinSnakeGame(ws, client, targetRoom);
+    } else {
+        // Create new game with AI snakes
+        createSnakeGameWithAI(ws, client);
+    }
+}
+
+/**
+ * Create a new Snake game with AI snakes
+ */
+function createSnakeGameWithAI(ws, client) {
+    const roomId = generateId().slice(0, 6).toUpperCase();
+    
+    const room = {
+        id: roomId,
+        gameType: 'snake',
+        maxPlayers: SNAKE_MAX_PLAYERS,
+        players: [{
+            id: client.id,
+            name: client.name,
+            ws: ws,
+            hand: [],
+            score: 0,
+            tricksWon: 0,
+            isAI: false
+        }],
+        gameState: GAME_STATES.PLAYING,
+        currentPlayerIndex: 0,
+        trick: [],
+        leadSuit: null,
+        roundNumber: 0,
+        maxScore: 100,
+        heartsBroken: false,
+        currentPlay: [],
+        lastPlayerToPlay: null,
+        snakeGame: null,
+        snakeInterval: null
+    };
+    
+    rooms.set(roomId, room);
+    client.roomId = roomId;
+    activeGames.snake++;
+    broadcastGameCounts();
+    
+    // Initialize the game with AI snakes
+    initializeSnakeGameWithAI(room);
+    
+    // Add to queue since it has space for more players
+    snakeGameQueue.add(roomId);
+    
+    console.log(`New Snake game ${roomId} created by ${client.name} with AI snakes`);
+}
+
+/**
+ * Join an existing Snake game
+ */
+function joinSnakeGame(ws, client, room) {
+    room.players.push({
+        id: client.id,
+        name: client.name,
+        ws: ws,
+        hand: [],
+        score: 0,
+        tricksWon: 0,
+        isAI: false
+    });
+    
+    client.roomId = room.id;
+    
+    // Spawn new human snake
+    const game = room.snakeGame;
+    const humanCount = room.players.filter(p => !p.isAI).length;
+    const spawnPos = getRandomSpawnPosition(game);
+    
+    game.snakes[client.id] = {
+        id: client.id,
+        name: client.name,
+        body: [spawnPos],
+        direction: getRandomDirection(),
+        nextDirection: getRandomDirection(),
+        color: SNAKE_COLORS[(humanCount - 1) % SNAKE_COLORS.length],
+        alive: true,
+        score: 0,
+        growth: 3,
+        isAI: false,
+        moveCounter: 0,
+        speed: SNAKE_MIN_SPEED
+    };
+    
+    // Notify all players
+    broadcastToRoom(room.id, {
+        type: 'playerJoined',
+        player: { id: client.id, name: client.name },
+        players: room.players.map(p => ({ id: p.id, name: p.name, isAI: p.isAI }))
+    });
+    
+    // Send game start to new player
+    sendToClient(ws, {
+        type: 'gameStarted',
+        gameType: 'snake',
+        players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            color: game.snakes[p.id]?.color || 0x00ff00,
+            isAI: p.isAI
+        })),
+        worldWidth: SNAKE_WORLD_WIDTH,
+        worldHeight: SNAKE_WORLD_HEIGHT,
+        viewportWidth: SNAKE_VIEWPORT_WIDTH,
+        viewportHeight: SNAKE_VIEWPORT_HEIGHT,
+        tickRate: SNAKE_TICK_RATE
+    });
+    
+    // Check if room is now full
+    if (humanCount >= SNAKE_MAX_PLAYERS) {
+        snakeGameQueue.delete(room.id);
+    }
+    
+    broadcastGameCounts();
+    console.log(`${client.name} joined Snake game ${room.id}`);
+}
+
+/**
+ * Initialize Snake game with AI snakes
+ */
+function initializeSnakeGameWithAI(room) {
     room.gameState = GAME_STATES.PLAYING;
     
     // Initialize snake game state
     room.snakeGame = {
         snakes: {},
         food: [],
-        gridWidth: SNAKE_GRID_WIDTH,
-        gridHeight: SNAKE_GRID_HEIGHT,
+        worldWidth: SNAKE_WORLD_WIDTH,
+        worldHeight: SNAKE_WORLD_HEIGHT,
+        viewportWidth: SNAKE_VIEWPORT_WIDTH,
+        viewportHeight: SNAKE_VIEWPORT_HEIGHT,
         tick: 0,
         gameOver: false,
-        winner: null
+        aiCounter: 0
     };
     
-    // Initialize each player's snake
-    room.players.forEach((player, index) => {
-        const spawnPos = getSnakeSpawnPosition(index, room.players.length);
-        room.snakeGame.snakes[player.id] = {
-            id: player.id,
-            name: player.name,
-            body: [spawnPos],
-            direction: getInitialDirection(spawnPos),
-            nextDirection: getInitialDirection(spawnPos),
-            color: SNAKE_COLORS[index % SNAKE_COLORS.length],
-            alive: true,
-            score: 0,
-            growth: 3 // Start with 3 segments to grow
-        };
-    });
+    const game = room.snakeGame;
+    
+    // Spawn human player snake
+    const humanPlayer = room.players[0];
+    const humanSpawn = getRandomSpawnPosition(game);
+    game.snakes[humanPlayer.id] = {
+        id: humanPlayer.id,
+        name: humanPlayer.name,
+        body: [humanSpawn],
+        direction: getRandomDirection(),
+        nextDirection: getRandomDirection(),
+        color: SNAKE_COLORS[0],
+        alive: true,
+        score: 0,
+        growth: 3,
+        isAI: false,
+        moveCounter: 0,
+        speed: SNAKE_MIN_SPEED
+    };
+    
+    // Spawn AI snakes
+    for (let i = 0; i < SNAKE_MAX_AI; i++) {
+        spawnAISnake(room);
+    }
     
     // Spawn initial food
-    for (let i = 0; i < Math.max(3, room.players.length); i++) {
+    for (let i = 0; i < 50; i++) {
         spawnFood(room);
     }
     
-    // Broadcast game start
-    broadcastToRoom(room.id, {
+    // Broadcast game start to human player
+    sendToClient(humanPlayer.ws, {
         type: 'gameStarted',
         gameType: 'snake',
         players: room.players.map(p => ({
             id: p.id,
             name: p.name,
-            color: room.snakeGame.snakes[p.id].color
+            color: game.snakes[p.id]?.color || 0x00ff00,
+            isAI: p.isAI
         })),
-        gridWidth: SNAKE_GRID_WIDTH,
-        gridHeight: SNAKE_GRID_HEIGHT,
+        worldWidth: SNAKE_WORLD_WIDTH,
+        worldHeight: SNAKE_WORLD_HEIGHT,
+        viewportWidth: SNAKE_VIEWPORT_WIDTH,
+        viewportHeight: SNAKE_VIEWPORT_HEIGHT,
         tickRate: SNAKE_TICK_RATE
     });
     
-    // Send initial state
-    broadcastSnakeState(room);
-    
     // Start game loop
     room.snakeInterval = setInterval(() => {
-        gameTick(room);
+        snakeGameTick(room);
     }, SNAKE_TICK_RATE);
     
-    console.log(`Snake game started in room ${room.id} with ${room.players.length} players`);
+    console.log(`Snake game ${room.id} started with ${Object.keys(game.snakes).length} snakes`);
 }
 
 /**
- * Get spawn position for a snake based on player index
+ * Spawn an AI snake
  */
-function getSnakeSpawnPosition(playerIndex, totalPlayers) {
-    // Distribute snakes evenly around the grid
-    const margin = 3;
-    const positions = [
-        { x: margin, y: margin },
-        { x: SNAKE_GRID_WIDTH - margin - 1, y: margin },
-        { x: margin, y: SNAKE_GRID_HEIGHT - margin - 1 },
-        { x: SNAKE_GRID_WIDTH - margin - 1, y: SNAKE_GRID_HEIGHT - margin - 1 },
-        { x: Math.floor(SNAKE_GRID_WIDTH / 2), y: margin },
-        { x: Math.floor(SNAKE_GRID_WIDTH / 2), y: SNAKE_GRID_HEIGHT - margin - 1 },
-        { x: margin, y: Math.floor(SNAKE_GRID_HEIGHT / 2) },
-        { x: SNAKE_GRID_WIDTH - margin - 1, y: Math.floor(SNAKE_GRID_HEIGHT / 2) },
-        { x: Math.floor(SNAKE_GRID_WIDTH / 4), y: Math.floor(SNAKE_GRID_HEIGHT / 2) },
-        { x: Math.floor(3 * SNAKE_GRID_WIDTH / 4), y: Math.floor(SNAKE_GRID_HEIGHT / 2) }
-    ];
-    return positions[playerIndex % positions.length];
+function spawnAISnake(room) {
+    const game = room.snakeGame;
+    const aiId = `ai_${game.aiCounter++}`;
+    const spawnPos = getRandomSpawnPosition(game);
+    const colorIndex = (game.aiCounter % SNAKE_AI_COLORS.length);
+    
+    game.snakes[aiId] = {
+        id: aiId,
+        name: `Bot ${game.aiCounter}`,
+        body: [spawnPos],
+        direction: getRandomDirection(),
+        nextDirection: getRandomDirection(),
+        color: SNAKE_AI_COLORS[colorIndex],
+        alive: true,
+        score: 0,
+        growth: 3,
+        isAI: true,
+        moveCounter: 0,
+        speed: SNAKE_MIN_SPEED + 1 // AI starts slightly slower
+    };
 }
 
 /**
- * Get initial direction pointing toward the center
+ * Get random spawn position at least 5 units from edges
  */
-function getInitialDirection(pos) {
-    const centerX = SNAKE_GRID_WIDTH / 2;
-    const centerY = SNAKE_GRID_HEIGHT / 2;
-    
-    const dx = centerX - pos.x;
-    const dy = centerY - pos.y;
-    
-    if (Math.abs(dx) > Math.abs(dy)) {
-        return dx > 0 ? 'right' : 'left';
-    } else {
-        return dy > 0 ? 'down' : 'up';
-    }
+function getRandomSpawnPosition(game) {
+    return {
+        x: SNAKE_EDGE_MARGIN + Math.floor(Math.random() * (SNAKE_WORLD_WIDTH - 2 * SNAKE_EDGE_MARGIN)),
+        y: SNAKE_EDGE_MARGIN + Math.floor(Math.random() * (SNAKE_WORLD_HEIGHT - 2 * SNAKE_EDGE_MARGIN))
+    };
+}
+
+/**
+ * Get random direction
+ */
+function getRandomDirection() {
+    const directions = ['up', 'down', 'left', 'right'];
+    return directions[Math.floor(Math.random() * directions.length)];
+}
+
+/**
+ * Calculate snake speed based on length
+ */
+function calculateSnakeSpeed(snake) {
+    const length = snake.body.length;
+    // Speed increases as snake grows, but capped
+    const speedDecrease = Math.floor(length * SNAKE_SPEED_GROWTH_FACTOR);
+    const speed = Math.max(SNAKE_MAX_SPEED, SNAKE_MIN_SPEED - speedDecrease);
+    return speed;
 }
 
 /**
@@ -1539,9 +1761,9 @@ function spawnFood(room) {
     
     // Find empty spot
     let attempts = 0;
-    while (attempts < 100) {
-        const x = Math.floor(Math.random() * game.gridWidth);
-        const y = Math.floor(Math.random() * game.gridHeight);
+    while (attempts < 1000) {
+        const x = Math.floor(Math.random() * SNAKE_WORLD_WIDTH);
+        const y = Math.floor(Math.random() * SNAKE_WORLD_HEIGHT);
         const key = `${x},${y}`;
         
         if (!occupied.has(key)) {
@@ -1553,18 +1775,141 @@ function spawnFood(room) {
 }
 
 /**
- * Main game tick
+ * AI decision making for snake direction
  */
-function gameTick(room) {
+function updateAIDirection(room, snake) {
+    const game = room.snakeGame;
+    const head = snake.body[0];
+    
+    // Find nearest food
+    let nearestFood = null;
+    let nearestDist = Infinity;
+    
+    for (const food of game.food) {
+        const dist = Math.abs(food.x - head.x) + Math.abs(food.y - head.y);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearestFood = food;
+        }
+    }
+    
+    // Get all possible directions (excluding 180-degree turns)
+    const opposites = { up: 'down', down: 'up', left: 'right', right: 'left' };
+    const directions = ['up', 'down', 'left', 'right'].filter(d => d !== opposites[snake.direction]);
+    
+    // Score each direction
+    const directionScores = {};
+    
+    for (const dir of directions) {
+        let nextPos = { ...head };
+        switch (dir) {
+            case 'up': nextPos.y--; break;
+            case 'down': nextPos.y++; break;
+            case 'left': nextPos.x--; break;
+            case 'right': nextPos.x++; break;
+        }
+        
+        // Check if move is safe
+        if (isSafeMove(room, snake, nextPos)) {
+            directionScores[dir] = 100;
+            
+            // Bonus for moving toward food
+            if (nearestFood) {
+                const currentDist = Math.abs(nearestFood.x - head.x) + Math.abs(nearestFood.y - head.y);
+                const newDist = Math.abs(nearestFood.x - nextPos.x) + Math.abs(nearestFood.y - nextPos.y);
+                if (newDist < currentDist) {
+                    directionScores[dir] += 50;
+                }
+            }
+            
+            // Penalty for being near walls
+            if (nextPos.x < 10 || nextPos.x > SNAKE_WORLD_WIDTH - 10 ||
+                nextPos.y < 10 || nextPos.y > SNAKE_WORLD_HEIGHT - 10) {
+                directionScores[dir] -= 20;
+            }
+        } else {
+            directionScores[dir] = -1000; // Unsafe
+        }
+    }
+    
+    // Choose best direction
+    let bestDir = snake.direction;
+    let bestScore = -Infinity;
+    
+    for (const dir in directionScores) {
+        if (directionScores[dir] > bestScore) {
+            bestScore = directionScores[dir];
+            bestDir = dir;
+        }
+    }
+    
+    snake.nextDirection = bestDir;
+}
+
+/**
+ * Check if a move is safe
+ */
+function isSafeMove(room, snake, pos) {
+    const game = room.snakeGame;
+    
+    // Check walls
+    if (pos.x < 0 || pos.x >= SNAKE_WORLD_WIDTH ||
+        pos.y < 0 || pos.y >= SNAKE_WORLD_HEIGHT) {
+        return false;
+    }
+    
+    // Check self collision (excluding tail which will move)
+    for (let i = 0; i < snake.body.length - 1; i++) {
+        if (snake.body[i].x === pos.x && snake.body[i].y === pos.y) {
+            return false;
+        }
+    }
+    
+    // Check other snakes
+    for (const otherId in game.snakes) {
+        if (otherId === snake.id) continue;
+        const other = game.snakes[otherId];
+        if (!other.alive) continue;
+        
+        for (const seg of other.body) {
+            if (seg.x === pos.x && seg.y === pos.y) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * Main Snake game tick
+ */
+function snakeGameTick(room) {
     const game = room.snakeGame;
     if (game.gameOver) return;
     
     game.tick++;
     
+    // Update AI directions
+    for (const snakeId in game.snakes) {
+        const snake = game.snakes[snakeId];
+        if (snake.alive && snake.isAI) {
+            updateAIDirection(room, snake);
+        }
+    }
+    
     // Update each snake
     for (const snakeId in game.snakes) {
         const snake = game.snakes[snakeId];
         if (!snake.alive) continue;
+        
+        // Update speed based on length
+        snake.speed = calculateSnakeSpeed(snake);
+        
+        // Check if snake should move this tick
+        snake.moveCounter++;
+        if (snake.moveCounter < snake.speed) continue;
+        snake.moveCounter = 0;
         
         // Apply queued direction change
         snake.direction = snake.nextDirection;
@@ -1581,8 +1926,8 @@ function gameTick(room) {
         }
         
         // Check wall collision
-        if (newHead.x < 0 || newHead.x >= game.gridWidth ||
-            newHead.y < 0 || newHead.y >= game.gridHeight) {
+        if (newHead.x < 0 || newHead.x >= SNAKE_WORLD_WIDTH ||
+            newHead.y < 0 || newHead.y >= SNAKE_WORLD_HEIGHT) {
             killSnake(room, snake);
             continue;
         }
@@ -1598,10 +1943,15 @@ function gameTick(room) {
         for (const otherId in game.snakes) {
             if (otherId === snakeId) continue;
             const other = game.snakes[otherId];
-            if (other.body.some(seg => seg.x === newHead.x && seg.y === newHead.y)) {
-                collided = true;
-                break;
+            if (!other.alive) continue;
+            
+            for (const seg of other.body) {
+                if (seg.x === newHead.x && seg.y === newHead.y) {
+                    collided = true;
+                    break;
+                }
             }
+            if (collided) break;
         }
         if (collided) {
             killSnake(room, snake);
@@ -1629,100 +1979,155 @@ function gameTick(room) {
         }
     }
     
-    // Check if game is over (only one snake alive or time limit)
-    const aliveSnakes = Object.values(game.snakes).filter(s => s.alive);
-    
-    if (aliveSnakes.length === 0) {
-        endSnakeGame(room, null); // Draw
-    } else if (aliveSnakes.length === 1 && Object.keys(game.snakes).length > 1) {
-        endSnakeGame(room, aliveSnakes[0]);
+    // Spawn new AI snake if an AI died
+    const aiSnakes = Object.values(game.snakes).filter(s => s.isAI);
+    const aliveAISnakes = aiSnakes.filter(s => s.alive);
+    if (aliveAISnakes.length < SNAKE_MAX_AI && Math.random() < 0.02) { // 2% chance per tick
+        spawnAISnake(room);
     }
     
-    // Broadcast state
-    broadcastSnakeState(room);
+    // Broadcast state to each player with their viewport
+    broadcastSnakeStatePerPlayer(room);
 }
 
 /**
- * Kill a snake
+ * Kill a snake - handle human and AI differently
  */
 function killSnake(room, snake) {
     snake.alive = false;
     
-    // Turn snake body into food (optional - for fun)
     const game = room.snakeGame;
+    
+    // Turn snake body into food
     snake.body.forEach((seg, i) => {
-        if (i % 2 === 0 && game.food.length < 20) { // Every other segment becomes food
+        if (i % 3 === 0 && game.food.length < 100) {
             game.food.push({ x: seg.x, y: seg.y, id: generateId().slice(0, 4) });
         }
     });
     
-    broadcastToRoom(room.id, {
-        type: 'snakeDied',
-        playerId: snake.id,
-        playerName: snake.name,
-        score: snake.score
-    });
-}
-
-/**
- * End Snake game
- */
-function endSnakeGame(room, winner) {
-    const game = room.snakeGame;
-    game.gameOver = true;
-    
-    // Stop game loop
-    if (room.snakeInterval) {
-        clearInterval(room.snakeInterval);
-        room.snakeInterval = null;
+    if (snake.isAI) {
+        // AI snake dies - will respawn later
+        broadcastToRoom(room.id, {
+            type: 'snakeDied',
+            playerId: snake.id,
+            playerName: snake.name,
+            score: snake.score,
+            isAI: true
+        });
+    } else {
+        // Human snake dies - return to lobby
+        const player = room.players.find(p => p.id === snake.id);
+        if (player && player.ws) {
+            // Send death notification to player
+            sendToClient(player.ws, {
+                type: 'snakePlayerDied',
+                score: snake.score,
+                length: snake.body.length
+            });
+            
+            // Remove from room
+            player.ws = null; // Mark as disconnected from game
+        }
+        
+        broadcastToRoom(room.id, {
+            type: 'snakeDied',
+            playerId: snake.id,
+            playerName: snake.name,
+            score: snake.score,
+            isAI: false
+        });
+        
+        // Add back to queue since a slot opened up
+        snakeGameQueue.add(room.id);
+        broadcastGameCounts();
     }
-    
-    // Calculate final scores/rankings
-    const rankings = Object.values(game.snakes)
-        .sort((a, b) => b.score - a.score)
-        .map((s, i) => ({
-            rank: i + 1,
-            id: s.id,
-            name: s.name,
-            score: s.score,
-            alive: s.alive,
-            length: s.body.length
-        }));
-    
-    broadcastToRoom(room.id, {
-        type: 'gameComplete',
-        gameType: 'snake',
-        winner: winner ? { id: winner.id, name: winner.name, score: winner.score } : null,
-        rankings: rankings
-    });
-    
-    room.gameState = GAME_STATES.GAME_END;
-    
-    console.log(`Snake game ended in room ${room.id}. Winner: ${winner ? winner.name : 'Draw'}`);
 }
 
 /**
- * Broadcast current game state to all players
+ * Broadcast game state to each player with their viewport
  */
-function broadcastSnakeState(room) {
+function broadcastSnakeStatePerPlayer(room) {
     const game = room.snakeGame;
     
-    const state = {
-        type: 'snakeState',
-        tick: game.tick,
-        snakes: Object.values(game.snakes).map(s => ({
-            id: s.id,
-            name: s.name,
-            body: s.body,
-            color: s.color,
-            alive: s.alive,
-            score: s.score,
-            direction: s.direction
-        })),
-        food: game.food
-    };
+    // Get all snakes and food for viewport calculations
+    const allSnakes = Object.values(game.snakes);
+    const allFood = game.food;
     
-    broadcastToRoom(room.id, state);
+    // Send personalized viewport to each human player
+    room.players.forEach(player => {
+        if (!player.ws || player.ws.readyState !== WebSocket.OPEN) return;
+        
+        const playerSnake = game.snakes[player.id];
+        if (!playerSnake || !playerSnake.alive) return;
+        
+        // Calculate viewport centered on player's snake
+        const head = playerSnake.body[0];
+        let viewportX = head.x - Math.floor(SNAKE_VIEWPORT_WIDTH / 2);
+        let viewportY = head.y - Math.floor(SNAKE_VIEWPORT_HEIGHT / 2);
+        
+        // Clamp viewport to world bounds
+        viewportX = Math.max(0, Math.min(viewportX, SNAKE_WORLD_WIDTH - SNAKE_VIEWPORT_WIDTH));
+        viewportY = Math.max(0, Math.min(viewportY, SNAKE_WORLD_HEIGHT - SNAKE_VIEWPORT_HEIGHT));
+        
+        // Filter snakes to those in viewport
+        const visibleSnakes = allSnakes
+            .filter(s => s.alive)
+            .map(s => {
+                // Transform snake body to viewport coordinates
+                const visibleBody = s.body
+                    .filter(seg => 
+                        seg.x >= viewportX && seg.x < viewportX + SNAKE_VIEWPORT_WIDTH &&
+                        seg.y >= viewportY && seg.y < viewportY + SNAKE_VIEWPORT_HEIGHT
+                    )
+                    .map(seg => ({
+                        x: seg.x - viewportX,
+                        y: seg.y - viewportY
+                    }));
+                
+                // Check if head is visible
+                const headVisible = s.body[0].x >= viewportX && s.body[0].x < viewportX + SNAKE_VIEWPORT_WIDTH &&
+                                    s.body[0].y >= viewportY && s.body[0].y < viewportY + SNAKE_VIEWPORT_HEIGHT;
+                
+                return {
+                    id: s.id,
+                    name: s.name,
+                    body: visibleBody,
+                    headVisible: headVisible,
+                    headWorldPos: s.body[0],
+                    color: s.color,
+                    alive: s.alive,
+                    score: s.score,
+                    direction: s.direction,
+                    isAI: s.isAI,
+                    length: s.body.length
+                };
+            })
+            .filter(s => s.body.length > 0);
+        
+        // Filter food to those in viewport
+        const visibleFood = allFood
+            .filter(f => 
+                f.x >= viewportX && f.x < viewportX + SNAKE_VIEWPORT_WIDTH &&
+                f.y >= viewportY && f.y < viewportY + SNAKE_VIEWPORT_HEIGHT
+            )
+            .map(f => ({
+                x: f.x - viewportX,
+                y: f.y - viewportY,
+                id: f.id
+            }));
+        
+        const state = {
+            type: 'snakeState',
+            tick: game.tick,
+            viewportX: viewportX,
+            viewportY: viewportY,
+            snakes: visibleSnakes,
+            food: visibleFood,
+            mySnakeId: player.id
+        };
+        
+        sendToClient(player.ws, state);
+    });
 }
 
 /**
@@ -1759,6 +2164,12 @@ function cleanupSnakeGame(room) {
         room.snakeInterval = null;
     }
     room.snakeGame = null;
+    snakeGameQueue.delete(room.id);
+    
+    if (activeGames.snake > 0) {
+        activeGames.snake--;
+        broadcastGameCounts();
+    }
 }
 
 // Start server

@@ -2004,12 +2004,14 @@ function snakeGameTick(room) {
         // Check food collision
         const foodIndex = game.food.findIndex(f => f.x === newHead.x && f.y === newHead.y);
         if (foodIndex !== -1) {
-            // Ate food
-            snake.score += 10;
+            // Ate food - grow and update score to match length
             snake.growth += 1;
             game.food.splice(foodIndex, 1);
             spawnFood(room);
         }
+        
+        // Update score to equal length
+        snake.score = snake.body.length;
         
         // Handle growth
         if (snake.growth > 0) {
@@ -2221,10 +2223,18 @@ function handleSnakeDirection(ws, client, direction) {
 function broadcastLeaderboard(room) {
     const game = room.snakeGame;
     
-    // Get top 10 snakes by length (human and AI combined)
+    // Update all scores to match lengths first
+    for (const snakeId in game.snakes) {
+        const snake = game.snakes[snakeId];
+        if (snake.alive) {
+            snake.score = snake.body.length;
+        }
+    }
+    
+    // Get top 10 snakes by score/length (human and AI combined)
     const allSnakes = Object.values(game.snakes)
         .filter(s => s.alive)
-        .sort((a, b) => b.body.length - a.body.length)
+        .sort((a, b) => b.score - a.score)
         .slice(0, 10)
         .map((s, index) => ({
             rank: index + 1,

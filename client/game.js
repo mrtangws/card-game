@@ -1134,15 +1134,15 @@ function handleSnakeState(data) {
 
 function handleSnakeDied(data) {
     if (data.isAI) {
-        showStatus(`${data.playerName} died! Score: ${data.score}`, 1500);
+        showStatus(`${data.playerName} died! Length: ${data.score}`, 1500);
     } else {
-        showStatus(`${data.playerName} died! Score: ${data.score}`, 3000);
+        showStatus(`${data.playerName} died! Length: ${data.score}`, 3000);
     }
 }
 
 function handleSnakePlayerDied(data) {
     // Player died - show game over and return to lobby
-    showStatus(`💀 You died! Score: ${data.score}, Length: ${data.length}`, 5000);
+    showStatus(`💀 You died! Final Length: ${data.length}`, 5000);
     
     // Reset game state
     snakeGame = null;
@@ -1371,8 +1371,9 @@ function updateSnakeScoreboard() {
     
     if (!snakeGame || !snakeGame.snakes) return;
     
+    // Sort by length (score now equals length)
     const sortedSnakes = [...snakeGame.snakes]
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.length - a.length);
     
     let y = 80;
     sortedSnakes.forEach((snake, index) => {
@@ -1380,8 +1381,9 @@ function updateSnakeScoreboard() {
         const isMe = snake.id === clientId;
         const aliveIndicator = snake.alive ? '●' : '○';
         const aiLabel = snake.isAI ? '[AI] ' : '';
+        const length = snake.length || snake.body?.length || 0;
         
-        const text = scene.add.text(20, y, `${aliveIndicator} ${aiLabel}${snake.name}: ${snake.score}`, {
+        const text = scene.add.text(20, y, `${aliveIndicator} ${aiLabel}${snake.name}: ${length}`, {
             fontSize: '14px',
             color: colorHex,
             fontStyle: isMe ? 'bold' : 'normal',

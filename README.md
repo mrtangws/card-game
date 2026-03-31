@@ -75,13 +75,14 @@ Navigate to `http://localhost:8080`
 4. **Starting Length**: All snakes start with length 3 (head + 2 segments)
 5. **Movement**: Use Arrow Keys or WASD to control your snake
 6. **Speed**: Snakes get faster as they grow (capped at maximum speed)
-7. **Food**: 200+ colorful apples to eat - grow and gain 10 points each
-8. **Apple Spawning**: New apples spawn periodically every 0.5 seconds
-9. **Collisions**: Avoid walls, other snakes, and yourself
-10. **AI Opponents**: 10 AI snakes hunt food and avoid obstacles
-11. **Live Leaderboard**: Top 10 longest snakes updated every second
-12. **Death**: Human players return to lobby when they die
-13. **Supports**: Up to 10 human players per game!
+7. **Food**: 200+ colorful apples to eat - grow longer with each one!
+8. **Score**: Your score equals your snake's length
+9. **Apple Spawning**: New apples spawn periodically every 0.5 seconds
+10. **Collisions**: Avoid walls, other snakes, and yourself
+11. **AI Opponents**: 10 AI snakes hunt food and avoid obstacles
+12. **Live Leaderboard**: Top 10 longest snakes updated every second
+13. **Death**: Human players return to lobby when they die
+14. **Supports**: Up to 10 human players per game!
 
 ### Controls
 

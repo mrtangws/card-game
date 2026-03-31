@@ -69,16 +69,17 @@ Navigate to `http://localhost:8080`
 
 #### Snake (Multiplayer)
 
-1. **World Size**: Massive 1000x1000 world!
+1. **World Size**: 200x200 world
 2. **Viewport**: Each player sees a 40x30 viewport centered on their snake
 3. **Spawning**: Snakes spawn randomly, at least 5 units from world edges
-4. **Movement**: Use Arrow Keys or WASD to control your snake
-5. **Speed**: Snakes get faster as they grow (capped at maximum speed)
-6. **Food**: Eat red food to grow and gain 10 points
-7. **Collisions**: Avoid walls, other snakes, and yourself
-8. **AI Opponents**: 10 AI snakes hunt food and avoid obstacles
-9. **Death**: Human players return to lobby when they die
-10. **Supports**: Up to 10 human players per game!
+4. **Starting Length**: All snakes start with length 3 (head + 2 segments)
+5. **Movement**: Use Arrow Keys or WASD to control your snake
+6. **Speed**: Snakes get faster as they grow (capped at maximum speed)
+7. **Food**: Eat red food to grow and gain 10 points
+8. **Collisions**: Avoid walls, other snakes, and yourself
+9. **AI Opponents**: 10 AI snakes hunt food and avoid obstacles
+10. **Death**: Human players return to lobby when they die
+11. **Supports**: Up to 10 human players per game!
 
 ### Controls
 
@@ -127,7 +128,8 @@ card-game/
 - **Hearts**: Turn-based trick-taking with AI opponents
 - **Big 2**: Multi-card play with poker hand validation
 - **Snake**: 
-  - Massive 1000x1000 world with per-player viewport
+  - 200x200 world with per-player viewport
+  - All snakes start with length 3 (head + 2 segments)
   - Real-time 10Hz game loop supporting up to 10 human players
   - Auto-join or create game with 10 AI snakes
   - AI pathfinding (food seeking, obstacle avoidance)

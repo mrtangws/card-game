@@ -25,8 +25,8 @@ const GAME_STATES = {
 };
 
 // Snake game constants
-const SNAKE_WORLD_WIDTH = 1000;
-const SNAKE_WORLD_HEIGHT = 1000;
+const SNAKE_WORLD_WIDTH = 200;
+const SNAKE_WORLD_HEIGHT = 200;
 const SNAKE_VIEWPORT_WIDTH = 40;
 const SNAKE_VIEWPORT_HEIGHT = 30;
 const SNAKE_TICK_RATE = 100; // ms per game tick
@@ -1560,17 +1560,18 @@ function joinSnakeGame(ws, client, room) {
     const game = room.snakeGame;
     const humanCount = room.players.filter(p => !p.isAI).length;
     const spawnPos = getRandomSpawnPosition(game);
+    const playerDir = getRandomDirection();
     
     game.snakes[client.id] = {
         id: client.id,
         name: client.name,
-        body: [spawnPos],
-        direction: getRandomDirection(),
-        nextDirection: getRandomDirection(),
+        body: createInitialSnakeBody(spawnPos, playerDir),
+        direction: playerDir,
+        nextDirection: playerDir,
         color: SNAKE_COLORS[(humanCount - 1) % SNAKE_COLORS.length],
         alive: true,
         score: 0,
-        growth: 3,
+        growth: 0, // Already at length 3
         isAI: false,
         moveCounter: 0,
         speed: SNAKE_MIN_SPEED
@@ -1633,16 +1634,17 @@ function initializeSnakeGameWithAI(room) {
     // Spawn human player snake
     const humanPlayer = room.players[0];
     const humanSpawn = getRandomSpawnPosition(game);
+    const humanDir = getRandomDirection();
     game.snakes[humanPlayer.id] = {
         id: humanPlayer.id,
         name: humanPlayer.name,
-        body: [humanSpawn],
-        direction: getRandomDirection(),
-        nextDirection: getRandomDirection(),
+        body: createInitialSnakeBody(humanSpawn, humanDir),
+        direction: humanDir,
+        nextDirection: humanDir,
         color: SNAKE_COLORS[0],
         alive: true,
         score: 0,
-        growth: 3,
+        growth: 0, // Already at length 3
         isAI: false,
         moveCounter: 0,
         speed: SNAKE_MIN_SPEED
@@ -1653,8 +1655,8 @@ function initializeSnakeGameWithAI(room) {
         spawnAISnake(room);
     }
     
-    // Spawn initial food
-    for (let i = 0; i < 50; i++) {
+    // Spawn initial food (reduced for 200x200 world)
+    for (let i = 0; i < 20; i++) {
         spawnFood(room);
     }
     
@@ -1684,24 +1686,47 @@ function initializeSnakeGameWithAI(room) {
 }
 
 /**
+ * Create initial snake body with length 3 (head + 2 segments)
+ */
+function createInitialSnakeBody(headPos, direction) {
+    const body = [headPos];
+    let x = headPos.x;
+    let y = headPos.y;
+    
+    // Add 2 more segments behind the head
+    for (let i = 0; i < 2; i++) {
+        switch (direction) {
+            case 'up': y++; break;
+            case 'down': y--; break;
+            case 'left': x++; break;
+            case 'right': x--; break;
+        }
+        body.push({ x, y });
+    }
+    
+    return body;
+}
+
+/**
  * Spawn an AI snake
  */
 function spawnAISnake(room) {
     const game = room.snakeGame;
     const aiId = `ai_${game.aiCounter++}`;
     const spawnPos = getRandomSpawnPosition(game);
+    const aiDir = getRandomDirection();
     const colorIndex = (game.aiCounter % SNAKE_AI_COLORS.length);
     
     game.snakes[aiId] = {
         id: aiId,
         name: `Bot ${game.aiCounter}`,
-        body: [spawnPos],
-        direction: getRandomDirection(),
-        nextDirection: getRandomDirection(),
+        body: createInitialSnakeBody(spawnPos, aiDir),
+        direction: aiDir,
+        nextDirection: aiDir,
         color: SNAKE_AI_COLORS[colorIndex],
         alive: true,
         score: 0,
-        growth: 3,
+        growth: 0, // Already at length 3
         isAI: true,
         moveCounter: 0,
         speed: SNAKE_MIN_SPEED + 1 // AI starts slightly slower
@@ -1998,9 +2023,9 @@ function killSnake(room, snake) {
     
     const game = room.snakeGame;
     
-    // Turn snake body into food
+    // Turn snake body into food (reduced for 200x200 world)
     snake.body.forEach((seg, i) => {
-        if (i % 3 === 0 && game.food.length < 100) {
+        if (i % 3 === 0 && game.food.length < 40) {
             game.food.push({ x: seg.x, y: seg.y, id: generateId().slice(0, 4) });
         }
     });

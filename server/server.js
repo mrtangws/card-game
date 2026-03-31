@@ -384,6 +384,7 @@ function joinRoom(ws, client, roomId) {
     sendToClient(ws, {
         type: 'roomJoined',
         roomId: roomId,
+        gameType: room.gameType,
         players: playerList
     });
     

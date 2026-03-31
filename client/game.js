@@ -130,6 +130,7 @@ function handleServerMessage(data) {
             
         case 'roomJoined':
             roomId = data.roomId;
+            gameType = data.gameType || 'hearts';  // Set gameType from server
             players = data.players;
             showRoomInfo();
             break;
@@ -1036,7 +1037,12 @@ function showSnakeRestartButton() {
     }
     restartDiv.style.display = 'block';
     
-    // Reset status
+    // Reset button and status for fresh restart (important for 2nd+ game)
+    const btn = document.getElementById('snakeRestartBtn');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Restart Game';
+    }
     const statusEl = document.getElementById('snakeRestartStatus');
     if (statusEl) statusEl.textContent = '';
 }
@@ -1201,8 +1207,12 @@ function showSnakeFinalScores(playerList) {
     
     scoresDiv.style.display = 'block';
     
-    // Sort by score descending
-    const sorted = [...playerList].sort((a, b) => b.score - a.score);
+    // Sort by score descending, then alive players before dead (even if scores tied)
+    const sorted = [...playerList].sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        // Same score: alive before dead
+        return (b.alive ? 1 : 0) - (a.alive ? 1 : 0);
+    });
     
     let html = '<h3>🐍 Snake Results</h3><table><tr><th>Rank</th><th>Player</th><th>Score</th></tr>';
     sorted.forEach((p, i) => {

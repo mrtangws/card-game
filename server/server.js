@@ -1,14 +1,27 @@
 /**
  * Card Game Server - Turn-based Hearts-style card game
  * Supports multiplayer with WebSocket connections
+ * + Google OAuth / Guest auth + PostgreSQL persistence
  */
 
 const WebSocket = require('ws');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const url = require('url');
 
 const PORT = process.env.PORT || 8080;
+
+// ----- Auth / DB config -----
+const DB = require('./database');
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${PORT}/auth/google/callback`;
+const COOKIE_SECRET = process.env.COOKIE_SECRET || 'dev-secret-change-in-prod';
+// Guest cookie name
+const GUEST_COOKIE = 'guest_id';
+const SESSION_COOKIE = 'session_id'; // stores internal user id (http-only)
 
 // Card suits and ranks
 const SUITS = ['hearts', 'diamonds', 'clubs', 'spades'];
@@ -34,11 +47,22 @@ const BIG2_SUIT_ORDER = { 'diamonds': 0, 'clubs': 1, 'hearts': 2, 'spades': 3 };
 const clients = new Map(); // ws -> clientData
 const rooms = new Map(); // roomId -> roomData
 
-// Create HTTP server for serving static files
-const server = http.createServer((req, res) => {
-    let filePath = req.url === '/' ? '/index.html' : req.url;
+// Create HTTP server for serving static files + auth routes
+const server = http.createServer(async (req, res) => {
+    const parsed = url.parse(req.url, true);
+
+    // Auth routes
+    if (parsed.pathname === '/auth/google') {
+      return handleGoogleLogin(req, res);
+    }
+    if (parsed.pathname === '/auth/google/callback') {
+      return handleGoogleCallback(req, res);
+    }
+
+    // Static file serving (with guest cookie auto-set for first-time visitors)
+    let filePath = parsed.pathname === '/' ? '/index.html' : parsed.pathname;
     filePath = path.join(__dirname, '..', 'client', filePath);
-    
+
     const extname = path.extname(filePath);
     const contentTypes = {
         '.html': 'text/html',
@@ -47,9 +71,18 @@ const server = http.createServer((req, res) => {
         '.png': 'image/png',
         '.json': 'application/json'
     };
-    
+
     const contentType = contentTypes[extname] || 'text/plain';
-    
+
+    // For HTML page loads without session cookie, ensure a guest cookie is set
+    if (extname === '.html' || parsed.pathname === '/') {
+      const cookies = parseCookies(req.headers.cookie);
+      if (!cookies[SESSION_COOKIE] && !cookies[GUEST_COOKIE]) {
+        // Set guest cookie (async but fire-and-forget; client reloads or WS will handle)
+        try { await ensureGuest(req, res); } catch {}
+      }
+    }
+
     fs.readFile(filePath, (err, content) => {
         if (err) {
             res.writeHead(404);
@@ -64,22 +97,56 @@ const server = http.createServer((req, res) => {
 // Create WebSocket server
 const wss = new WebSocket.Server({ server });
 
-wss.on('connection', (ws) => {
+wss.on('connection', async (ws, req) => {
     console.log('New client connected');
-    
+
+    // ----- Auth: resolve user from cookies -----
+    let userId = null;
+    let user = null;
+    const cookies = parseCookies(req && req.headers && req.headers.cookie);
+
+    try {
+      if (cookies[SESSION_COOKIE]) {
+        // Logged-in user via session cookie
+        user = await DB.getUserById(cookies[SESSION_COOKIE]);
+        if (user) userId = user.id;
+      } else if (cookies[GUEST_COOKIE]) {
+        // Guest user
+        user = await DB.upsertGuestUser(cookies[GUEST_COOKIE], null);
+        if (user) userId = user.id;
+      } else {
+        // No cookie at all (rare, since HTTP server sets one) — create ephemeral guest
+        const newGuest = generateId() + generateId();
+        user = await DB.upsertGuestUser(newGuest, null);
+        if (user) userId = user.id;
+      }
+    } catch (e) {
+      console.error('WS auth lookup failed:', e.message);
+    }
+
     const clientId = generateId();
-    clients.set(ws, {
+    const clientData = {
         id: clientId,
-        name: `Player${clientId.slice(0, 4)}`,
+        userId: userId || null,              // internal DB user id (for logging)
+        name: user ? (user.display_name || `Player${clientId.slice(0, 4)}`) : `Player${clientId.slice(0, 4)}`,
+        isGuest: !!(user && user.guest_id),
+        googleId: user ? user.google_id : null,
         roomId: null,
         ws: ws
-    });
-    
+    };
+    clients.set(ws, clientData);
+
     sendToClient(ws, {
         type: 'connected',
-        clientId: clientId
+        clientId: clientId,
+        userId: userId || null,
+        displayName: clientData.name,
+        isGuest: clientData.isGuest
     });
-    
+
+    // Log connection event
+    DB.logEvent(userId, 'ws_connect', { clientId });
+
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
@@ -88,9 +155,10 @@ wss.on('connection', (ws) => {
             console.error('Invalid message:', e);
         }
     });
-    
+
     ws.on('close', () => {
-        console.log('Client disconnected:', clientId);
+        console.log('Client disconnected:', clientId, 'userId:', userId);
+        DB.logEvent(userId, 'ws_disconnect', { clientId });
         handleDisconnect(ws);
     });
 });
@@ -98,6 +166,135 @@ wss.on('connection', (ws) => {
 function generateId() {
     return Math.random().toString(36).substring(2, 15);
 }
+
+// ----- Cookie & Auth helpers -----
+function parseCookies(cookieHeader) {
+  const out = {};
+  if (!cookieHeader) return out;
+  cookieHeader.split(';').forEach(part => {
+    const [k, v] = part.trim().split('=');
+    if (k && v) out[k] = decodeURIComponent(v);
+  });
+  return out;
+}
+
+function setCookie(res, name, value, opts = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+  if (opts.httpOnly) parts.push('HttpOnly');
+  if (opts.secure) parts.push('Secure');
+  if (opts.sameSite) parts.push(`SameSite=${opts.sameSite}`);
+  if (opts.maxAge) parts.push(`Max-Age=${opts.maxAge}`);
+  if (opts.path) parts.push(`Path=${opts.path}`);
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function getBaseUrl(req) {
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers.host || `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
+// Google OAuth: redirect user to Google's consent screen
+function handleGoogleLogin(req, res) {
+  if (!GOOGLE_CLIENT_ID) {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    return res.end('Google OAuth not configured (GOOGLE_CLIENT_ID missing)');
+  }
+  const redirectUri = GOOGLE_REDIRECT_URI || `${getBaseUrl(req)}/auth/google/callback`;
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'openid email profile');
+  authUrl.searchParams.set('prompt', 'select_account');
+  res.writeHead(302, { Location: authUrl.toString() });
+  res.end();
+}
+
+// Google OAuth callback: exchange code → token → userinfo → upsert user → set cookie → redirect
+async function handleGoogleCallback(req, res) {
+  try {
+    const q = url.parse(req.url, true).query;
+    const code = q.code;
+    if (!code) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      return res.end('Missing code');
+    }
+    const redirectUri = GOOGLE_REDIRECT_URI || `${getBaseUrl(req)}/auth/google/callback`;
+
+    // Exchange code for tokens
+    const tokenRes = await new Promise((resolve, reject) => {
+      const postData = new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }).toString();
+      const req2 = https.request({
+        hostname: 'oauth2.googleapis.com',
+        path: '/token',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(postData) },
+      }, (r) => {
+        let data = '';
+        r.on('data', chunk => data += chunk);
+        r.on('end', () => resolve({ status: r.statusCode, body: data }));
+      });
+      req2.on('error', reject);
+      req2.write(postData);
+      req2.end();
+    });
+    if (tokenRes.status !== 200) {
+      throw new Error('Token exchange failed: ' + tokenRes.body);
+    }
+    const tokens = JSON.parse(tokenRes.body);
+    const idToken = tokens.id_token;
+    if (!idToken) throw new Error('No id_token in response');
+
+    // Decode JWT id_token (payload is base64url between first and second dot)
+    const payloadB64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8'));
+    const googleId = payload.sub;
+    const displayName = payload.name || payload.email || 'Player';
+
+    // Upsert user in DB
+    const user = await DB.upsertGoogleUser({ googleId, displayName });
+
+    // Set session cookie (httpOnly)
+    const baseUrl = getBaseUrl(req);
+    const isSecure = baseUrl.startsWith('https');
+    setCookie(res, SESSION_COOKIE, user.id, { httpOnly: true, secure: isSecure, sameSite: 'Lax', path: '/' });
+
+    // Redirect to home
+    res.writeHead(302, { Location: '/' });
+    res.end();
+  } catch (e) {
+    console.error('Google OAuth callback error:', e);
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('OAuth error: ' + e.message);
+  }
+}
+
+// Guest: ensure guest_id cookie exists, upsert user, return page or redirect
+async function ensureGuest(req, res, next) {
+  const cookies = parseCookies(req.headers.cookie);
+  let guestId = cookies[GUEST_COOKIE];
+  if (!guestId) {
+    guestId = generateId() + generateId();
+    const isSecure = (req.headers['x-forwarded-proto'] || 'http') === 'https';
+    setCookie(res, GUEST_COOKIE, guestId, { httpOnly: true, secure: isSecure, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 365 });
+  }
+  // Upsert guest user (best-effort, non-blocking for page load)
+  try {
+    const cookies2 = parseCookies(req.headers.cookie);
+    // If we just set cookie, re-read may not have it yet for this response; but WS will read it next request
+    // For initial page load, we don't strictly need user now; WS will handle it.
+  } catch {}
+  return { guestId };
+}
+
+// ----- End Auth helpers -----
 
 // Snake colors for player identification
 const SNAKE_COLORS = ['#4CAF50', '#2196F3', '#FF9800', '#9C27B0', '#F44336', '#00BCD4', '#795548', '#607D8B', '#E91E63', '#8BC34A'];
@@ -144,9 +341,12 @@ function broadcastToRoom(roomId, data, excludeWs = null) {
 function handleMessage(ws, data) {
     const client = clients.get(ws);
     if (!client) return;
-    
+
     console.log('Received:', data.type, 'from', client.id);
-    
+
+    // Log user action (best-effort, non-blocking)
+    DB.logEvent(client.userId, 'user_action', { type: data.type, roomId: client.roomId });
+
     switch (data.type) {
         case 'setName':
             client.name = data.name || client.name;
@@ -197,7 +397,9 @@ function handleMessage(ws, data) {
 function handleDisconnect(ws) {
     const client = clients.get(ws);
     if (!client) return;
-    
+
+    DB.logEvent(client.userId, 'ws_disconnect', { clientId: client.id, roomId: client.roomId });
+
     if (client.roomId) {
         const room = rooms.get(client.roomId);
         if (room) {
@@ -2198,8 +2400,15 @@ function broadcastGameCounts() {
 // Broadcast game counts every 5 seconds
 setInterval(broadcastGameCounts, 5000);
 
-// Start server
-server.listen(PORT, () => {
+// Start server (init DB schema first)
+(async () => {
+  try {
+    await DB.initSchema();
+  } catch (e) {
+    console.error('DB initSchema error:', e.message);
+  }
+  server.listen(PORT, () => {
     console.log(`Card Game Server running on port ${PORT}`);
     console.log(`Open http://localhost:${PORT} in your browser`);
-});
+  });
+})();

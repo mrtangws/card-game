@@ -30,6 +30,9 @@ let snakeKeyListeners = null; // Keyboard listeners for snake
 let currentPlay = [];   // Current play on table (Big 2)
 let canFollow = true;   // Whether you can follow current play (Big 2)
 let playHistory = [];   // Last 10 plays for Big 2
+let authUserId = null;
+let authIsGuest = true;
+let authDisplayName = '';
 
 // Phaser config
 const config = {
@@ -76,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('joinBtn').addEventListener('click', joinRoom);
     document.getElementById('startBtn').addEventListener('click', startGame);
     document.getElementById('playerName').addEventListener('change', updateName);
+    document.getElementById('googleLoginBtn').addEventListener('click', startGoogleLogin);
     
     // Snake Start Game button
     const startSnakeBtn = document.getElementById('startSnakeBtn');
@@ -126,6 +130,10 @@ function handleServerMessage(data) {
     switch (data.type) {
         case 'connected':
             clientId = data.clientId;
+            authUserId = data.userId || null;
+            authIsGuest = data.isGuest !== false;
+            authDisplayName = data.displayName || '';
+            updateAuthUI();
             break;
             
         case 'nameSet':
@@ -258,6 +266,30 @@ function sendMessage(data) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(data));
     }
+}
+
+function startGoogleLogin() {
+    window.location.href = '/auth/google';
+}
+
+function updateAuthUI() {
+    const authStatusEl = document.getElementById('authStatus');
+    const googleBtnEl = document.getElementById('googleLoginBtn');
+    const nameInputEl = document.getElementById('playerName');
+    if (!authStatusEl || !googleBtnEl) return;
+
+    if (authUserId && !authIsGuest) {
+        authStatusEl.textContent = `Signed in as ${authDisplayName || 'Google user'}`;
+        googleBtnEl.style.display = 'none';
+        if (nameInputEl && authDisplayName && (!nameInputEl.value || nameInputEl.value === 'Player')) {
+            nameInputEl.value = authDisplayName;
+            updateName();
+        }
+        return;
+    }
+
+    authStatusEl.textContent = 'Playing as guest';
+    googleBtnEl.style.display = 'inline-block';
 }
 
 function createRoom() {

@@ -100,6 +100,17 @@
             background: #c23850;
             transform: translateY(-2px);
         }
+
+        .btn-google {
+            background: #ffffff;
+            color: #222;
+            border: 1px solid #d9d9d9;
+        }
+
+        .btn-google:hover {
+            background: #f7f7f7;
+            transform: translateY(-2px);
+        }
         
         .btn:disabled {
             opacity: 0.5;
@@ -295,6 +306,11 @@
     
     <div id="lobby">
         <h1>🎴 Card Game</h1>
+
+        <div id="authPanel" style="margin-bottom:15px; padding:10px; background:#f6f8ff; border-radius:10px;">
+            <div id="authStatus" style="font-size:13px; color:#333; margin-bottom:8px;">Checking sign-in status...</div>
+            <button class="btn btn-google" id="googleLoginBtn" style="margin:0; width:100%;">Sign in with Google</button>
+        </div>
         
         <div class="input-group">
             <input type="text" id="playerName" placeholder="Enter your name" value="Player">
